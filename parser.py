@@ -237,17 +237,14 @@ def _detect_section(line: str) -> str | None:
     # Fuzzy fallback
     words = cleaned.split()
     if 1 <= len(words) <= 8:
-        # Check if it starts with a known section word
         first_word = words[0].lower().rstrip(':')
         is_stylized = (
             cleaned.isupper()
             or cleaned.istitle()
             or (len(words) <= 5 and all(w[0].isupper() for w in words if w and w[0].isalpha()))
-            # Also treat ALL-CAPS single token as stylised
             or cleaned.replace(' ', '').isupper()
         )
         if first_word in _CANONICAL_STARTERS and is_stylized:
-            # Try progressively shorter phrases 
             for n in range(len(words), 0, -1):
                 candidate = ' '.join(w.lower().rstrip(':') for w in words[:n])
                 if candidate in SECTION_ALIASES:
@@ -260,8 +257,18 @@ def _detect_section(line: str) -> str | None:
                 remaining = words[n:]
                 if not remaining or all(not re.search(r'[.!?]', w) for w in remaining):
                     return SECTION_ALIASES[candidate]
+                
+        if 1 <= len(words) <= 6:
+            last_word = words[-1].lower().rstrip(':')
+            is_stylized = (
+                cleaned.istitle()
+                or cleaned.isupper()
+                or all(w[0].isupper() for w in words if w and w[0].isalpha())
+            )
+            if last_word in SECTION_ALIASES and is_stylized:
+                return SECTION_ALIASES[last_word]
 
-    return None
+        return None
 
 
 def _extract_contact(lines: list[str]) -> dict:

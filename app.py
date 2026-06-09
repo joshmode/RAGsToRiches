@@ -564,6 +564,7 @@ class AppState:
     pdf_bytes: bytes | None = None
     last_file_hash: int | None = None
     trigger_sidebar: bool = False
+    active_suggestion_index: int = 0
 
 def _init_session_state() -> None:
     default_state = AppState()
@@ -809,27 +810,35 @@ def _search_phrases(text: str) -> list[str]:
     return [phrase for phrase in phrases if len(phrase) >= 20]
 
 @st.cache_data(show_spinner=False)
-def _highlight_pdf_bytes(pdf_bytes: bytes, rewrite_items: tuple[tuple[str, str, str, str, str], ...]) -> bytes:
+def _highlight_pdf_bytes(
+    pdf_bytes: bytes,
+    rewrite_items: tuple[tuple[str, str, str, str, str], ...],
+    active_key: str | None = None,
+) -> tuple[bytes, int | None]:
+    
     try:
         import fitz
     except Exception:
-        return pdf_bytes
+        return pdf_bytes, None
 
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception:
-        return pdf_bytes
+        return pdf_bytes, None
+
+    active_page: int | None = None
 
     for item_id, text, severity, reasoning, rewritten in rewrite_items:
+        is_active = (item_id == active_key)
         found = False
         for phrase in _search_phrases(text):
             if found:
                 break
-            for page in doc:
+            for page_index, page in enumerate(doc):
                 matches = page.search_for(phrase, quads=True)
                 if not matches:
                     continue
-                color = _severity_color(severity, active=False)
+                color = _severity_color(severity, active=is_active)
                 for quad in matches[:3]:
                     annot = page.add_highlight_annot(quad)
                     annot.set_colors(stroke=color)
@@ -844,16 +853,18 @@ def _highlight_pdf_bytes(pdf_bytes: bytes, rewrite_items: tuple[tuple[str, str, 
                     else:
                         popup_text = f"Rewrite suggestion: {item_id}"
                     annot.set_info(content=popup_text, title="RAGsToRiches")
-                    annot.update(opacity=0.32)
+                    annot.update(opacity=0.55 if is_active else 0.28)
                 found = True
+                if is_active:
+                    active_page = page_index + 1 
                 break
 
     output = io.BytesIO()
     doc.save(output, garbage=4, deflate=True)
     doc.close()
-    return output.getvalue()
+    return output.getvalue(), active_page
 
-def _render_pdf_viewer(pdf_bytes: bytes | None, rewrites: dict[str, list[dict]]) -> None:
+def _render_pdf_viewer(pdf_bytes: bytes | None, rewrites: dict[str, list[dict]], active_key: str | None = None) -> None:
     if not pdf_bytes:
         st.markdown('<div class="card muted">Upload and analyse a PDF to see highlighted rewrite targets.</div>', unsafe_allow_html=True)
         return
@@ -868,12 +879,17 @@ def _render_pdf_viewer(pdf_bytes: bytes | None, rewrites: dict[str, list[dict]])
         )
         for section_name, i, item in _actionable_items(rewrites)
     )
-    rendered = _highlight_pdf_bytes(pdf_bytes, highlight_payload) if highlight_payload else pdf_bytes
+    if highlight_payload:
+        rendered, active_page = _highlight_pdf_bytes(pdf_bytes, highlight_payload, active_key)
+    else:
+        rendered, active_page = pdf_bytes, None
+
     encoded = base64.b64encode(rendered).decode("utf-8")
+    page_fragment = f"&page={active_page}" if active_page else ""
     st.markdown(
         f"""
         <div class="pdf-shell">
-            <iframe class="pdf-frame" src="data:application/pdf;base64,{encoded}#toolbar=1&navpanes=0"></iframe>
+            <iframe class="pdf-frame" src="data:application/pdf;base64,{encoded}#toolbar=1&navpanes=0{page_fragment}"></iframe>
         </div>
         """,
         unsafe_allow_html=True,
@@ -918,82 +934,104 @@ def _render_rewrites_tab(rewrites: dict[str, list[dict]], pdf_bytes: bytes | Non
             st.session_state.generated_cv = ""
             st.rerun()
 
-    pdf_col, review_col = st.columns([1.18, 1], gap="large")
-    with pdf_col:
-        st.markdown('<span class="section-label">Highlighted PDF</span>', unsafe_allow_html=True)
-        _render_pdf_viewer(pdf_bytes, rewrites)
-
-    with review_col:
-        st.markdown('<span class="section-label">Rewrite Decisions</span>', unsafe_allow_html=True)
-        st.markdown('<div class="suggestion-scroll">', unsafe_allow_html=True)
-
-        if not actionable:
+    if not actionable:
+        pdf_col, review_col = st.columns([1.18, 1], gap="large")
+        with pdf_col:
+            st.markdown('<span class="section-label">Highlighted PDF</span>', unsafe_allow_html=True)
+            _render_pdf_viewer(pdf_bytes, rewrites, active_key=None)
+        with review_col:
+            st.markdown('<span class="section-label">Rewrite Decisions</span>', unsafe_allow_html=True)
             st.markdown(
                 '<div class="card muted">No rewrite-worthy sentences were detected. Header/date lines were skipped.</div>',
                 unsafe_allow_html=True,
             )
+        return
 
-        current_section = ""
-        for section_name, i, item in actionable:
-            if section_name != current_section:
-                current_section = section_name
-                st.markdown(f'<div class="result-section-head">{html.escape(section_name.title())}</div>', unsafe_allow_html=True)
+    st.session_state.active_suggestion_index = max(
+        0, min(st.session_state.active_suggestion_index, len(actionable) - 1)
+    )
+    idx = st.session_state.active_suggestion_index
+    section_name, i, item = actionable[idx]
+    key = _suggestion_key(section_name, i, item)
 
-            key = _suggestion_key(section_name, i, item)
-            state = st.session_state.accepted.get(key)
-            state_class = "accepted" if state is True else "dismissed" if state is False else ""
-            state_text = "Accepted" if state is True else "Dismissed" if state is False else "Needs decision"
-            safe_original = html.escape(item.get("original", ""))
-            safe_rewritten = html.escape(item.get("rewritten", ""))
-            safe_reasoning = html.escape(item.get("reasoning", ""))
-            fw_badge = html.escape(item.get("framework_used", ""))
+    pdf_col, review_col = st.columns([1.18, 1], gap="large")
+    with pdf_col:
+        st.markdown('<span class="section-label">Highlighted PDF</span>', unsafe_allow_html=True)
+        _render_pdf_viewer(pdf_bytes, rewrites, active_key=key)
 
-            severity = item.get("severity", "yellow")
-            sev_dot = f'<span class="severity-dot {severity}"></span>'
-
+    with review_col:
+        nav_left, nav_mid, nav_right = st.columns([1, 3, 1])
+        with nav_left:
+            if st.button("←", key="nav_prev", disabled=(idx == 0), use_container_width=True):
+                st.session_state.active_suggestion_index -= 1
+                st.rerun()
+        with nav_mid:
             st.markdown(
-                f"""
-                <div class="suggestion-card {state_class}">
-                    <div class="suggestion-head">
-                        <span class="suggestion-title">{sev_dot}{html.escape(state_text)}</span>
-                        <span class="fw-badge">{fw_badge}</span>
-                    </div>
-                    <div class="rewrite-grid">
-                        <div class="rewrite-pane before">
-                            <span class="pane-label">Original</span>
-                            <p class="rewrite-text">{safe_original}</p>
-                        </div>
-                        <div class="rewrite-pane after">
-                            <span class="pane-label">Suggested rewrite</span>
-                            <p class="rewrite-text">{safe_rewritten}</p>
-                        </div>
-                    </div>
-                    <div class="reasoning-row"> {safe_reasoning}</div>
-                """,
+                f'<div style="text-align:center;padding:0.5rem 0">'
+                f'<span class="status-chip">Suggestion {idx + 1} of {len(actionable)}</span>'
+                f'&nbsp;&nbsp;<span class="status-chip">{html.escape(section_name.title())}</span>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
+        with nav_right:
+            if st.button("→", key="nav_next", disabled=(idx == len(actionable) - 1), use_container_width=True):
+                st.session_state.active_suggestion_index += 1
+                st.rerun()
 
-            if state is True:
-                st.markdown('<div class="decision-bar accepted">This rewrite will be used in CV generation.</div></div>', unsafe_allow_html=True)
-            elif state is False:
-                st.markdown('<div class="decision-bar dismissed">This rewrite will be ignored in CV generation.</div></div>', unsafe_allow_html=True)
-            else:
-                st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('<span class="section-label">Rewrite Decision</span>', unsafe_allow_html=True)
 
-            st.markdown('<div class="suggestion-btn-row">', unsafe_allow_html=True)
-            btn_a, btn_b = st.columns(2)
-            with btn_a:
-                if st.button("Accept", key=f"acc_{key}", use_container_width=True):
-                    st.session_state.accepted[key] = True
-                    st.session_state.generated_cv = ""
-                    st.rerun()
-            with btn_b:
-                if st.button("Dismiss", key=f"rej_{key}", use_container_width=True):
-                    st.session_state.accepted[key] = False
-                    st.session_state.generated_cv = ""
-                    st.rerun()
+        state = st.session_state.accepted.get(key)
+        state_class = "accepted" if state is True else "dismissed" if state is False else ""
+        state_text = "Accepted" if state is True else "Dismissed" if state is False else "Needs decision"
+        safe_original = html.escape(item.get("original", ""))
+        safe_rewritten = html.escape(item.get("rewritten", ""))
+        safe_reasoning = html.escape(item.get("reasoning", ""))
+        fw_badge = html.escape(item.get("framework_used", ""))
+
+        severity = item.get("severity", "yellow")
+        sev_dot = f'<span class="severity-dot {severity}"></span>'
+
+        st.markdown(
+            f"""
+            <div class="suggestion-card {state_class}">
+                <div class="suggestion-head">
+                    <span class="suggestion-title">{sev_dot}{html.escape(state_text)}</span>
+                    <span class="fw-badge">{fw_badge}</span>
+                </div>
+                <div class="rewrite-grid">
+                    <div class="rewrite-pane before">
+                        <span class="pane-label">Original</span>
+                        <p class="rewrite-text">{safe_original}</p>
+                    </div>
+                    <div class="rewrite-pane after">
+                        <span class="pane-label">Suggested rewrite</span>
+                        <p class="rewrite-text">{safe_rewritten}</p>
+                    </div>
+                </div>
+                <div class="reasoning-row">💡 {safe_reasoning}</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if state is True:
+            st.markdown('<div class="decision-bar accepted">This rewrite will be used in CV generation.</div></div>', unsafe_allow_html=True)
+        elif state is False:
+            st.markdown('<div class="decision-bar dismissed">This rewrite will be ignored in CV generation.</div></div>', unsafe_allow_html=True)
+        else:
             st.markdown('</div>', unsafe_allow_html=True)
 
+        st.markdown('<div class="suggestion-btn-row">', unsafe_allow_html=True)
+        btn_a, btn_b = st.columns(2)
+        with btn_a:
+            if st.button("Accept", key=f"acc_{key}", use_container_width=True):
+                st.session_state.accepted[key] = True
+                st.session_state.generated_cv = ""
+                st.rerun()
+        with btn_b:
+            if st.button("Dismiss", key=f"rej_{key}", use_container_width=True):
+                st.session_state.accepted[key] = False
+                st.session_state.generated_cv = ""
+                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
 def _render_keywords_tab(jd_kws: list[str], missing: list[str], present: list[str], freqs: dict[str, int]) -> None:
@@ -1242,7 +1280,8 @@ def main() -> None:
                     <div class="contact-grid">{chips}</div>
                 </div>
                 """, unsafe_allow_html=True)
-
+        
+        
         warnings = [w for w in r.get("warnings", []) if "not detected" in w.lower() or "corrupt" in w.lower()]
         if warnings:
             st.markdown('<span class="section-label" style="margin-top:0.5rem">Parser Notes</span>', unsafe_allow_html=True)
