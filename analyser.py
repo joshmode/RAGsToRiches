@@ -83,7 +83,6 @@ def rewrite_bullet(
     use_critic: bool = False,
     model: str = ""
 ) -> dict:
-    """Rewrite a single resume bullet using retrieved framework guidance"""
     framework_context = "\n\n".join(f.document for f in frameworks)
     # We only pass the first 12 keywords to save tokens
     keywords_hint = ", ".join(missing_keywords[:12]) if missing_keywords else "none"
@@ -302,7 +301,6 @@ def _line_is_rewrite_candidate(line: str, explicit_bullet: bool = False, section
     if re.search(r'@|linkedin\.com|github\.com|https?://', cleaned, re.IGNORECASE):
         return False
 
-    # Lower the final word count gate to 3 for relaxed sections
     return explicit_bullet or len(words) >= (3 if section in relaxed_sections else 7)
 
 
