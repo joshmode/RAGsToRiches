@@ -12,15 +12,21 @@ try:
     STREAMLIT_AVAILABLE = True
 except ImportError:
     STREAMLIT_AVAILABLE = False
-    print("CRITICAL: Streamlit is required. Run: pip install streamlit")
+    print("streamlit is required. run: pip install streamlit")
     sys.exit(1)
 
 try:
-    from parser import extract_text
-    from analyser import analyse_resume, generate_cv, generate_cover_letter
+    from parser import parse_file
+    from analyser import analyse, gen_cv, gen_cover_letter
+    import auth
+    import db
+    import mentor
+    import job_scraper
+    import feedback
+    from router import _bad_key
     BACKEND_AVAILABLE = True
 except Exception as e:
-    print(f"\n>>> CRITICAL BACKEND ERROR: {e} <<<\n")
+    print(f"backend import error: {e}")
     BACKEND_AVAILABLE = False
 
 _PAGE_CONFIG: dict[str, str] = {
@@ -30,7 +36,7 @@ _PAGE_CONFIG: dict[str, str] = {
     "initial_sidebar_state": "collapsed",
 }
 
-_SCORE_THRESHOLDS: dict[str, dict[str, Any]] = {
+_SCORE_TIERS: dict[str, dict[str, Any]] = {
     "strong": {"min": 70, "color": "#15C39A", "label": "Strong"},
     "medium": {"min": 50, "color": "#E8A735", "label": "Needs work"},
     "weak":   {"min": 0,  "color": "#E5534B", "label": "Needs improvement"},
@@ -122,7 +128,6 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; color: #0D0F11;
     margin-top: 1.25rem;
 }
 
-/* ── UI Elements & Labels ── */
 .section-label {
     font-family: 'Instrument Serif', serif !important;
     font-weight: 400 !important;
@@ -258,7 +263,6 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; color: #0D0F11;
 .decision-bar.accepted { background: #15C39A; color: #FFFFFF; }
 .decision-bar.dismissed { background: #fee2e2; color: #991b1b; }
 
-/* Spacing between decision-bar/card and accept-dismiss buttons */
 .suggestion-btn-row { margin-top: 0.75rem; }
 
 /* Keywords */
@@ -371,7 +375,6 @@ textarea:focus, input:focus { border-color: #15C39A !important; }
 .section-card.present { background: #15C39A; border-color: #12A884; }
 .section-card.missing { background: #E5534B; border-color: #C94A42; }
 
-/* Radio Buttons for Navigation */
 div[role="radiogroup"] {
     background: linear-gradient(135deg, #0a0a0f 0%, #111827 45%, #172554 100%);
     padding: 0.45rem 0.55rem;
@@ -429,7 +432,6 @@ label[data-baseweb="radio"][aria-checked="true"] div:last-child {
     text-shadow: 0 1px 3px rgba(0,0,0,0.35);
 }
 
-/* ── Score Tooltip ── */
 .score-tooltip-wrap {
     position: relative;
     cursor: pointer;
@@ -499,32 +501,37 @@ label[data-baseweb="radio"][aria-checked="true"] div:last-child {
 }
 """
 
-_SCORE_HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "score_history.json")
+_SCORE_HISTORY_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "data",
+    "score_history.json",
+)
 
 
-def _load_score_history() -> list[dict]:
+def _load_hist() -> list[dict]:
     try:
         if os.path.exists(_SCORE_HISTORY_PATH):
             with open(_SCORE_HISTORY_PATH, "r") as f:
                 data = json.load(f)
             if isinstance(data, list):
-                return data[-50:]  # cap at 50
+                return data[-50:]
     except Exception:
         pass
     return []
 
 
-def _save_score_history(history: list[dict]) -> None:
+def _save_hist(h: list[dict]) -> None:
     try:
+        os.makedirs(os.path.dirname(_SCORE_HISTORY_PATH), exist_ok=True)
         with open(_SCORE_HISTORY_PATH, "w") as f:
-            json.dump(history[-50:], f)
+            json.dump(h[-50:], f)
     except Exception as e:
-        print(f"Failed to save score history: {e}")
+        print(f"failed to save score history: {e}")
 
 
 # providers
 _PROVIDER_MODELS: dict[str, list[str]] = {
-    "Gemini": ["gemma-4-31b-it", "gemini-2.5-flash", "gemini-2.5-pro"],
+    "Gemini": ["gemma-4-31b-it", "gemini-3.5-flash", "gemini-3.1-pro"],
     "Claude": ["claude-4-5-sonnet-latest", "claude-4-5-haiku-latest"],
     "ChatGPT": ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
     "Local": ["llama3"],
@@ -538,19 +545,19 @@ _DISPLAY_TO_PROVIDER: dict[str, str] = {
 }
 
 
-def _build_model_options() -> list[str]:
-    options = []
-    for provider, models in _PROVIDER_MODELS.items():
-        for model in models:
-            options.append(f"{provider} → {model}")
-    return options
+def _model_opts() -> list[str]:
+    opts = []
+    for prov, models in _PROVIDER_MODELS.items():
+        for m in models:
+            opts.append(f"{prov} -> {m}")
+    return opts
 
 
-def _parse_model_selection(selection: str) -> tuple[str, str, str]:
-    parts = selection.split(" → ", 1)
-    display = parts[0].strip()
+def _parse_sel(sel: str) -> tuple[str, str, str]:
+    parts = sel.split(" -> ", 1)
+    disp = parts[0].strip()
     model = parts[1].strip() if len(parts) > 1 else ""
-    return display, _DISPLAY_TO_PROVIDER.get(display, "gemini"), model
+    return disp, _DISPLAY_TO_PROVIDER.get(disp, "gemini"), model
 
 
 @dataclass
@@ -560,29 +567,28 @@ class AppState:
     analysed: bool = False
     score_history: list[dict] = field(default_factory=list)
     generated_cv: str = ""
-    generated_cover_letter: str = ""
+    gen_cl: str = ""
     pdf_bytes: bytes | None = None
     last_file_hash: int | None = None
     trigger_sidebar: bool = False
-    active_suggestion_index: int = 0
+    active_idx: int = 0
 
-def _init_session_state() -> None:
-    default_state = AppState()
-    for key, val in default_state.__dict__.items():
-        if key not in st.session_state:
-            st.session_state[key] = val
-    # Load persistent score history from disk on first init
+def _init_state() -> None:
+    d = AppState()
+    for k, v in d.__dict__.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
     if not st.session_state.score_history:
-        st.session_state.score_history = _load_score_history()
+        st.session_state.score_history = _load_hist()
 
-def _get_score_config(score: int) -> dict[str, Any]:
-    if score >= _SCORE_THRESHOLDS["strong"]["min"]:
-        return _SCORE_THRESHOLDS["strong"]
-    if score >= _SCORE_THRESHOLDS["medium"]["min"]:
-        return _SCORE_THRESHOLDS["medium"]
-    return _SCORE_THRESHOLDS["weak"]
+def _score_tier(score: int) -> dict[str, Any]:
+    if score >= _SCORE_TIERS["strong"]["min"]:
+        return _SCORE_TIERS["strong"]
+    if score >= _SCORE_TIERS["medium"]["min"]:
+        return _SCORE_TIERS["medium"]
+    return _SCORE_TIERS["weak"]
 
-def _render_hero() -> None:
+def _hero() -> None:
     st.markdown("""
     <div class="hero-wrap">
         <div class="hero-eyebrow">Resume intelligence, reimagined</div>
@@ -594,35 +600,37 @@ def _render_hero() -> None:
     </div>
     """, unsafe_allow_html=True)
 
-def _iter_rewrite_items(rewrites: dict[str, list[dict]]) -> list[tuple[str, int, dict]]:
-    return [
-        (section_name, i, item)
-        for section_name, bullets in rewrites.items()
-        for i, item in enumerate(bullets)
-    ]
+def _all_rw(rewrites: dict[str, list[dict]]) -> list[tuple[str, int, dict]]:
+    out = []
+    for sec, bullets in rewrites.items():
+        for i, item in enumerate(bullets):
+            out.append((sec, i, item))
+    return out
 
-def _suggestion_key(section_name: str, i: int, item: dict) -> str:
-    return item.get("id") or f"{section_name}_{i}"
+def _sug_key(sec: str, i: int, item: dict) -> str:
+    return item.get("id") or f"{sec}_{i}"
 
-def _actionable_items(rewrites: dict[str, list[dict]]) -> list[tuple[str, int, dict]]:
-    return [
-        (section_name, i, item)
-        for section_name, i, item in _iter_rewrite_items(rewrites)
-        if item.get("framework_used") not in ("none", "error")
-        and item.get("original") != item.get("rewritten")
-    ]
+def _actionable(rewrites: dict[str, list[dict]]) -> list[tuple[str, int, dict]]:
+    out = []
+    for sec, i, item in _all_rw(rewrites):
+        if item.get("framework_used") in ("none", "error"):
+            continue
+        if item.get("original") == item.get("rewritten"):
+            continue
+        out.append((sec, i, item))
+    return out
 
-def _accepted_rewrite_map(rewrites: dict[str, list[dict]]) -> dict[str, str]:
-    accepted_map: dict[str, str] = {}
-    for section_name, i, item in _iter_rewrite_items(rewrites):
+def _acc_map(rewrites: dict[str, list[dict]]) -> dict[str, str]:
+    m: dict[str, str] = {}
+    for sec, i, item in _all_rw(rewrites):
         if not isinstance(item, dict):
             continue
-        key = _suggestion_key(section_name, i, item)
-        if st.session_state.accepted.get(key) is True:
-            accepted_map[item.get("original", "")] = item.get("rewritten", "")
-    return accepted_map
+        k = _sug_key(sec, i, item)
+        if st.session_state.accepted.get(k) is True:
+            m[item.get("original", "")] = item.get("rewritten", "")
+    return m
 
-def _generate_docx(markdown_text: str) -> bytes:
+def _mk_docx(md_text: str) -> bytes:
     try:
         from docx import Document
         from docx.shared import Pt, Inches, RGBColor
@@ -631,12 +639,12 @@ def _generate_docx(markdown_text: str) -> bytes:
         from docx.oxml import OxmlElement
         import re as _re
     except ImportError:
-        raise RuntimeError("python-docx is not installed. Run: pip install python-docx")
+        raise RuntimeError("python-docx not installed. run: pip install python-docx")
 
-    if not markdown_text:
-        raise ValueError("Generated CV is empty.")
-    if len(markdown_text.strip()) < 100:
-        raise ValueError("Generated CV appears incomplete.")
+    if not md_text:
+        raise ValueError("generated cv is empty.")
+    if len(md_text.strip()) < 100:
+        raise ValueError("generated cv appears incomplete.")
 
     doc = Document()
 
@@ -652,7 +660,7 @@ def _generate_docx(markdown_text: str) -> bytes:
     normal.font.size = Pt(10.5)
     normal.font.color.rgb = RGBColor(0x1e, 0x29, 0x3b)
 
-    def _add_hr(doc):
+    def _hr(doc):
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(1)
         p.paragraph_format.space_after  = Pt(3)
@@ -667,10 +675,9 @@ def _generate_docx(markdown_text: str) -> bytes:
         pPr.append(pBdr)
         return p
 
-    def _add_runs(p, raw_line: str, base_size: float = 10.5, base_bold: bool = False):
+    def _runs(p, ln: str, sz: float = 10.5, bold: bool = False):
         import re as rr
-        parts = rr.split(r'(\*\*.*?\*\*|\*.*?\*|_.*?_)', raw_line)
-        for part in parts:
+        for part in rr.split(r'(\*\*.*?\*\*|\*.*?\*|_.*?_)', ln):
             if part.startswith('**') and part.endswith('**') and len(part) > 4:
                 run = p.add_run(part[2:-2])
                 run.bold = True
@@ -680,10 +687,10 @@ def _generate_docx(markdown_text: str) -> bytes:
                 run.italic = True
             else:
                 run = p.add_run(part)
-                run.bold = base_bold
-            run.font.size = Pt(base_size)
+                run.bold = bold
+            run.font.size = Pt(sz)
 
-    lines = markdown_text.split('\n')
+    lines = md_text.split('\n')
     i = 0
     while i < len(lines):
         line = lines[i].rstrip()
@@ -707,15 +714,14 @@ def _generate_docx(markdown_text: str) -> bytes:
 
         # Section headings 
         if line.startswith('## '):
-            heading_text = line[3:].strip().upper()
             p = doc.add_paragraph()
             p.paragraph_format.space_before = Pt(8)
             p.paragraph_format.space_after  = Pt(0)
-            run = p.add_run(heading_text)
+            run = p.add_run(line[3:].strip().upper())
             run.bold = True
             run.font.size = Pt(10)
             run.font.color.rgb = RGBColor(0x0D, 0x0F, 0x11)
-            _add_hr(doc)
+            _hr(doc)
             i += 1
             continue
 
@@ -724,24 +730,23 @@ def _generate_docx(markdown_text: str) -> bytes:
             p = doc.add_paragraph()
             p.paragraph_format.space_before = Pt(4)
             p.paragraph_format.space_after  = Pt(1)
-            _add_runs(p, line[4:].strip(), base_size=10.5, base_bold=True)
+            _runs(p, line[4:].strip(), bold=True)
             i += 1
             continue
 
         # Thin divider
         if _re.match(r'^-{3,}$|^\*{3,}$|^_{3,}$', line.strip()):
-            _add_hr(doc)
+            _hr(doc)
             i += 1
             continue
 
-        # Bullet point
-        bullet_match = _re.match(r'^(\s*)[-*•]\s+(.*)', line)
-        if bullet_match:
+        m = _re.match(r'^(\s*)[-*•]\s+(.*)', line)
+        if m:
             p = doc.add_paragraph(style='List Bullet')
             p.paragraph_format.space_before = Pt(1)
             p.paragraph_format.space_after  = Pt(2)
             p.paragraph_format.left_indent  = Inches(0.2)
-            _add_runs(p, bullet_match.group(2).strip(), base_size=10.5)
+            _runs(p, m.group(2).strip())
             i += 1
             continue
 
@@ -749,7 +754,7 @@ def _generate_docx(markdown_text: str) -> bytes:
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(1)
         p.paragraph_format.space_after  = Pt(3)
-        _add_runs(p, line.strip(), base_size=10.5)
+        _runs(p, line.strip())
         i += 1
 
     buf = io.BytesIO()
@@ -757,7 +762,7 @@ def _generate_docx(markdown_text: str) -> bytes:
     buf.seek(0)
     return buf.getvalue()
 
-def _generate_pdf(markdown_text: str) -> bytes | None:
+def _gen_pdf(md_text: str) -> bytes | None:
     import tempfile
     import os
 
@@ -772,7 +777,7 @@ def _generate_pdf(markdown_text: str) -> bytes | None:
             return None
 
     pdf = MarkdownPdf(toc_level=0)
-    pdf.add_section(Section(markdown_text))
+    pdf.add_section(Section(md_text))
 
     # markdown-pdf .save() 
     tmp_path = os.path.join(tempfile.gettempdir(), "ragstoriches_cv.pdf")
@@ -788,7 +793,13 @@ def _generate_pdf(markdown_text: str) -> bytes | None:
 
     return data
 
-def _severity_color(severity: str, active: bool = False) -> tuple[float, float, float]:
+_SEV_URGENCY: dict[str, str] = {
+    "red":    "Needs immediate rewrite",
+    "yellow": "Could be stronger",
+    "green":  "Minor polish",
+}
+
+def _sev_col(severity: str, active: bool = False) -> tuple[float, float, float]:
     if active:
         return (0.04, 0.45, 0.28)
     if severity == "red":
@@ -797,22 +808,26 @@ def _severity_color(severity: str, active: bool = False) -> tuple[float, float, 
         return (0.10, 0.58, 0.33)
     return (0.92, 0.62, 0.05)
 
-def _search_phrases(text: str) -> list[str]:
-    cleaned = " ".join(text.split())
-    words = cleaned.split()
-    phrases = [cleaned]
-    if len(words) > 18:
-        phrases.append(" ".join(words[:18]))
-    if len(words) > 10:
-        phrases.append(" ".join(words[:10]))
-    if len(words) > 10:
-        phrases.append(" ".join(words[-10:]))
-    return [phrase for phrase in phrases if len(phrase) >= 20]
+def _frags(text: str) -> list[str]:
+    t = " ".join(text.split())
+    w = t.split()
+    ph = [t]
+    if len(w) > 18:
+        ph.append(" ".join(w[:18]))
+    if len(w) > 10:
+        ph.append(" ".join(w[:10]))
+    if len(w) > 10:
+        ph.append(" ".join(w[-10:]))
+    out = []
+    for x in ph:
+        if len(x) >= 20:
+            out.append(x)
+    return out
 
 @st.cache_data(show_spinner=False)
-def _highlight_pdf_bytes(
+def _highlight_pdf(
     pdf_bytes: bytes,
-    rewrite_items: tuple[tuple[str, str, str, str, str], ...],
+    rewrite_items: tuple[tuple[str, str, str, str, str, int], ...],
     active_key: str | None = None,
 ) -> tuple[bytes, int | None]:
     
@@ -826,66 +841,68 @@ def _highlight_pdf_bytes(
     except Exception:
         return pdf_bytes, None
 
-    active_page: int | None = None
+    pg: int | None = None
 
-    for item_id, text, severity, reasoning, rewritten in rewrite_items:
-        is_active = (item_id == active_key)
+    for item_id, text, sev, reasoning, rewritten, number in rewrite_items:
+        act = (item_id == active_key)
         found = False
-        for phrase in _search_phrases(text):
+        for phrase in _frags(text):
             if found:
                 break
-            for page_index, page in enumerate(doc):
-                matches = page.search_for(phrase, quads=True)
-                if not matches:
+            for pi, page in enumerate(doc):
+                ms = page.search_for(phrase, quads=True)
+                if not ms:
                     continue
-                color = _severity_color(severity, active=is_active)
-                for quad in matches[:3]:
-                    annot = page.add_highlight_annot(quad)
-                    annot.set_colors(stroke=color)
-                    # popup: severity + suggestion + reasoning
+                col = _sev_col(sev, active=act)
+                for q in ms[:3]:
+                    a = page.add_highlight_annot(q)
+                    a.set_colors(stroke=col)
+                    urg = _SEV_URGENCY.get(sev, "Suggestion")
                     if rewritten and rewritten != text:
-                        popup_text = (
-                            f"[{severity.upper()}] Suggested rewrite:\n{rewritten}\n\n"
+                        msg = (
+                            f"[#{number}] [{urg}] Suggested rewrite:\n{rewritten}\n\n"
                             f"Why: {reasoning}"
                         )
                     elif reasoning:
-                        popup_text = f"[{severity.upper()}] {reasoning}"
+                        msg = f"[#{number}] [{urg}] {reasoning}"
                     else:
-                        popup_text = f"Rewrite suggestion: {item_id}"
-                    annot.set_info(content=popup_text, title="RAGsToRiches")
-                    annot.update(opacity=0.55 if is_active else 0.28)
+                        msg = f"[#{number}] Rewrite suggestion: {item_id}"
+                    a.set_info(content=msg, title="RAGsToRiches")
+                    a.update(opacity=0.55 if act else 0.28)
                 found = True
-                if is_active:
-                    active_page = page_index + 1 
+                if act:
+                    pg = pi + 1
                 break
 
-    output = io.BytesIO()
-    doc.save(output, garbage=4, deflate=True)
+    buf = io.BytesIO()
+    doc.save(buf, garbage=4, deflate=True)
     doc.close()
-    return output.getvalue(), active_page
+    return buf.getvalue(), pg
 
-def _render_pdf_viewer(pdf_bytes: bytes | None, rewrites: dict[str, list[dict]], active_key: str | None = None) -> None:
+def _pdf_viewer(pdf_bytes: bytes | None, rewrites: dict[str, list[dict]], active_key: str | None = None) -> None:
     if not pdf_bytes:
         st.markdown('<div class="card muted">Upload and analyse a PDF to see highlighted rewrite targets.</div>', unsafe_allow_html=True)
         return
 
-    highlight_payload = tuple(
-        (
-            _suggestion_key(section_name, i, item),
+    acts = list(_actionable(rewrites))
+    tmp = []
+    for n, (sec, i, item) in enumerate(acts):
+        tmp.append((
+            _sug_key(sec, i, item),
             item.get("highlight_text") or item.get("original", ""),
             item.get("severity", "yellow"),
             item.get("reasoning", ""),
             item.get("rewritten", ""),
-        )
-        for section_name, i, item in _actionable_items(rewrites)
-    )
-    if highlight_payload:
-        rendered, active_page = _highlight_pdf_bytes(pdf_bytes, highlight_payload, active_key)
+            n + 1,
+        ))
+    payload = tuple(tmp)
+    if payload:
+        rendered, pg = _highlight_pdf(pdf_bytes, payload, active_key)
     else:
-        rendered, active_page = pdf_bytes, None
+        rendered, pg = pdf_bytes, None
 
     encoded = base64.b64encode(rendered).decode("utf-8")
-    page_fragment = f"&page={active_page}" if active_page else ""
+    page_fragment = f"&page={pg}" if pg else ""
     st.markdown(
         f"""
         <div class="pdf-shell">
@@ -895,27 +912,74 @@ def _render_pdf_viewer(pdf_bytes: bytes | None, rewrites: dict[str, list[dict]],
         unsafe_allow_html=True,
     )
 
-def _render_rewrites_tab(rewrites: dict[str, list[dict]], pdf_bytes: bytes | None) -> None:
-    actionable = _actionable_items(rewrites)
+    if payload:
+        st.markdown(
+            '<span style="font-size:0.72rem;font-weight:700;color:#6B7280;text-transform:uppercase;'
+            'letter-spacing:0.08em;display:block;margin-top:0.65rem;margin-bottom:0.35rem">'
+            'Jump to highlight</span>',
+            unsafe_allow_html=True,
+        )
+        chip_cols = st.columns(min(len(acts), 8))
+        for n, (sec, i, item) in enumerate(acts):
+            k = _sug_key(sec, i, item)
+            sev = item.get("severity", "yellow")
+            urg = _SEV_URGENCY.get(sev, "Suggestion")
+            snippet = (item.get("highlight_text") or item.get("original", ""))[:60]
+            act = k == active_key
+            label = f"{'* ' if act else ''}{n + 1}"
+            with chip_cols[n % min(len(acts), 8)]:
+                if st.button(
+                    label,
+                    key=f"jump_{k}",
+                    use_container_width=True,
+                    help=f"{urg}: {snippet}",
+                ):
+                    found = 0
+                    for j, (s2, ii, it) in enumerate(acts):
+                        if _sug_key(s2, ii, it) == k:
+                            found = j
+                            break
+                    st.session_state.active_idx = found
+                    st.rerun()
+
+@st.fragment(run_every=5)
+def _render_anns(analysis_id: int, suggestion_key: str) -> None:
+    relevant = []
+    for a in db.get_annotations(analysis_id):
+        if a["key"] == suggestion_key:
+            relevant.append(a)
+    if relevant:
+        st.markdown('<span class="section-label" style="margin-top:1.5rem;">Discussion</span>', unsafe_allow_html=True)
+        for a in relevant:
+            st.markdown(
+                f'<div style="background:#F7F8FA;padding:0.7rem;border-radius:10px;margin-bottom:0.5rem;font-size:0.85rem;border:1px solid #E8EAED;">'
+                f'<span style="font-weight:700;color:#0D0F11;margin-right:0.5rem;">{html.escape(a["user"])}</span>'
+                f'<span style="color:#6B7280;font-size:0.75rem;">{a["time"][:16].replace("T", " ")}</span><br>'
+                f'<div style="margin-top:0.3rem;">{html.escape(a["comment"])}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+def _rewrites_tab(rewrites: dict[str, list[dict]], pdf_bytes: bytes | None) -> None:
+    actionable = _actionable(rewrites)
     if not rewrites:
         st.markdown('<p class="muted">No experience or project sections were found.</p>', unsafe_allow_html=True)
         return
 
-    accepted_count = sum(
-        1 for section_name, i, item in actionable
-        if st.session_state.accepted.get(_suggestion_key(section_name, i, item)) is True
-    )
-    dismissed_count = sum(
-        1 for section_name, i, item in actionable
-        if st.session_state.accepted.get(_suggestion_key(section_name, i, item)) is False
-    )
+    acc_count = 0
+    dis_count = 0
+    for sec, i, item in actionable:
+        state = st.session_state.accepted.get(_sug_key(sec, i, item))
+        if state is True:
+            acc_count += 1
+        elif state is False:
+            dis_count += 1
 
     st.markdown(
         f"""
         <div class="review-toolbar" style="margin-bottom:0.75rem">
             <span class="status-chip">{len(actionable)} suggested changes</span>
-            <span class="status-chip">{accepted_count} accepted</span>
-            <span class="status-chip">{dismissed_count} dismissed</span>
+            <span class="status-chip">{acc_count} accepted</span>
+            <span class="status-chip">{dis_count} dismissed</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -924,8 +988,8 @@ def _render_rewrites_tab(rewrites: dict[str, list[dict]], pdf_bytes: bytes | Non
     tool_a, tool_b, _ = st.columns([1, 1, 4])
     with tool_a:
         if st.button("Accept all", use_container_width=True):
-            for section_name, i, item in actionable:
-                st.session_state.accepted[_suggestion_key(section_name, i, item)] = True
+            for sec, i, item in actionable:
+                st.session_state.accepted[_sug_key(sec, i, item)] = True
             st.session_state.generated_cv = ""
             st.rerun()
     with tool_b:
@@ -938,7 +1002,7 @@ def _render_rewrites_tab(rewrites: dict[str, list[dict]], pdf_bytes: bytes | Non
         pdf_col, review_col = st.columns([1.18, 1], gap="large")
         with pdf_col:
             st.markdown('<span class="section-label">Highlighted PDF</span>', unsafe_allow_html=True)
-            _render_pdf_viewer(pdf_bytes, rewrites, active_key=None)
+            _pdf_viewer(pdf_bytes, rewrites, active_key=None)
         with review_col:
             st.markdown('<span class="section-label">Rewrite Decisions</span>', unsafe_allow_html=True)
             st.markdown(
@@ -947,35 +1011,38 @@ def _render_rewrites_tab(rewrites: dict[str, list[dict]], pdf_bytes: bytes | Non
             )
         return
 
-    st.session_state.active_suggestion_index = max(
-        0, min(st.session_state.active_suggestion_index, len(actionable) - 1)
+    st.session_state.active_idx = max(
+        0, min(st.session_state.active_idx, len(actionable) - 1)
     )
-    idx = st.session_state.active_suggestion_index
+    idx = st.session_state.active_idx
     section_name, i, item = actionable[idx]
-    key = _suggestion_key(section_name, i, item)
+    key = _sug_key(section_name, i, item)
 
     pdf_col, review_col = st.columns([1.18, 1], gap="large")
     with pdf_col:
         st.markdown('<span class="section-label">Highlighted PDF</span>', unsafe_allow_html=True)
-        _render_pdf_viewer(pdf_bytes, rewrites, active_key=key)
+        _pdf_viewer(pdf_bytes, rewrites, active_key=key)
 
     with review_col:
         nav_left, nav_mid, nav_right = st.columns([1, 3, 1])
         with nav_left:
-            if st.button("←", key="nav_prev", disabled=(idx == 0), use_container_width=True):
-                st.session_state.active_suggestion_index -= 1
+            if st.button("Prev", key="nav_prev", disabled=(idx == 0), use_container_width=True):
+                st.session_state.active_idx -= 1
                 st.rerun()
         with nav_mid:
+            cur_state = st.session_state.accepted.get(key)
+            cur_state_text = "Accepted" if cur_state is True else "Dismissed" if cur_state is False else "Undecided"
             st.markdown(
                 f'<div style="text-align:center;padding:0.5rem 0">'
                 f'<span class="status-chip">Suggestion {idx + 1} of {len(actionable)}</span>'
                 f'&nbsp;&nbsp;<span class="status-chip">{html.escape(section_name.title())}</span>'
+                f'&nbsp;&nbsp;<span class="status-chip">{html.escape(cur_state_text)}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
         with nav_right:
-            if st.button("→", key="nav_next", disabled=(idx == len(actionable) - 1), use_container_width=True):
-                st.session_state.active_suggestion_index += 1
+            if st.button("Next", key="nav_next", disabled=(idx == len(actionable) - 1), use_container_width=True):
+                st.session_state.active_idx += 1
                 st.rerun()
 
         st.markdown('<span class="section-label">Rewrite Decision</span>', unsafe_allow_html=True)
@@ -989,13 +1056,14 @@ def _render_rewrites_tab(rewrites: dict[str, list[dict]], pdf_bytes: bytes | Non
         fw_badge = html.escape(item.get("framework_used", ""))
 
         severity = item.get("severity", "yellow")
+        urgency_label = _SEV_URGENCY.get(severity, "Suggestion")
         sev_dot = f'<span class="severity-dot {severity}"></span>'
 
         st.markdown(
             f"""
             <div class="suggestion-card {state_class}">
                 <div class="suggestion-head">
-                    <span class="suggestion-title">{sev_dot}{html.escape(state_text)}</span>
+                    <span class="suggestion-title">#{idx + 1} &nbsp;{sev_dot}{html.escape(urgency_label)}</span>
                     <span class="fw-badge">{fw_badge}</span>
                 </div>
                 <div class="rewrite-grid">
@@ -1008,7 +1076,7 @@ def _render_rewrites_tab(rewrites: dict[str, list[dict]], pdf_bytes: bytes | Non
                         <p class="rewrite-text">{safe_rewritten}</p>
                     </div>
                 </div>
-                <div class="reasoning-row">💡 {safe_reasoning}</div>
+                <div class="reasoning-row">{safe_reasoning}</div>
             """,
             unsafe_allow_html=True,
         )
@@ -1016,7 +1084,7 @@ def _render_rewrites_tab(rewrites: dict[str, list[dict]], pdf_bytes: bytes | Non
         if state is True:
             st.markdown('<div class="decision-bar accepted">This rewrite will be used in CV generation.</div></div>', unsafe_allow_html=True)
         elif state is False:
-            st.markdown('<div class="decision-bar dismissed">This rewrite will be ignored in CV generation.</div></div>', unsafe_allow_html=True)
+            st.markdown('<div class="decision-bar dismissed">Original text kept, suggested rewrite omitted from CV generation.</div></div>', unsafe_allow_html=True)
         else:
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1034,7 +1102,17 @@ def _render_rewrites_tab(rewrites: dict[str, list[dict]], pdf_bytes: bytes | Non
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-def _render_keywords_tab(jd_kws: list[str], missing: list[str], present: list[str], freqs: dict[str, int]) -> None:
+        if st.session_state.get("db_analysis_id"):
+            _render_anns(st.session_state.db_analysis_id, key)
+            
+            curr_user = st.session_state.get("current_user")
+            ann_text = st.text_input("Add a comment", key=f"ann_in_{key}")
+            if st.button("Post Comment", key=f"ann_btn_{key}"):
+                if ann_text.strip() and curr_user:
+                    db.save_annotation(st.session_state.db_analysis_id, curr_user["id"], key, ann_text)
+                    st.rerun()
+
+def _keywords_tab(jd_kws: list[str], missing: list[str], present: list[str], freqs: dict[str, int]) -> None:
     if not jd_kws:
         st.markdown(
             '<p style="color:#a1a1aa;padding:1rem 0">Paste a job description above and re-analyse to see keyword gaps.</p>',
@@ -1058,16 +1136,20 @@ def _render_keywords_tab(jd_kws: list[str], missing: list[str], present: list[st
     miss_col, have_col = st.columns(2, gap="large")
 
     with miss_col:
-        st.markdown(f'<span class="section-label"> Missing ({len(missing)})</span>', unsafe_allow_html=True)
-        chips = "".join(f'<span class="kw-missing">{html.escape(kw)}</span>' for kw in missing)
+        st.markdown(f'<span class="section-label">Missing ({len(missing)})</span>', unsafe_allow_html=True)
+        chips = ""
+        for kw in missing:
+            chips += f'<span class="kw-missing">{html.escape(kw)}</span>' 
         st.markdown(
-            f'<div class="kw-wrap">{chips or "<i style=\'color:#a1a1aa\'>None — great coverage!</i>"}</div>',
+            f'<div class="kw-wrap">{chips or "<i style=\'color:#a1a1aa\'>None, great coverage!</i>"}</div>',
             unsafe_allow_html=True,
         )
 
     with have_col:
-        st.markdown(f'<span class="section-label"> Present ({len(present)})</span>', unsafe_allow_html=True)
-        chips = "".join(f'<span class="kw-present">{html.escape(kw)} <span style="opacity:0.7;font-size:0.8em">({freqs.get(kw, 0)})</span></span>' for kw in present)
+        st.markdown(f'<span class="section-label">Present ({len(present)})</span>', unsafe_allow_html=True)
+        chips = ""
+        for kw in present:
+            chips += f'<span class="kw-present">{html.escape(kw)} <span style="opacity:0.7;font-size:0.8em">({freqs.get(kw, 0)})</span></span>' 
         st.markdown(
             f'<div class="kw-wrap">{chips or "<i style=\'color:#a1a1aa\'>No matches found</i>"}</div>',
             unsafe_allow_html=True,
@@ -1079,49 +1161,80 @@ def main() -> None:
         st.stop()
 
     st.set_page_config(**_PAGE_CONFIG)
-    _init_session_state()
+    
+    auth.render_auth()
+    
+    _init_state()
     if _CUSTOM_CSS.strip():
         st.markdown(f"<style>{_CUSTOM_CSS}</style>", unsafe_allow_html=True)
 
-    _render_hero()
+    _hero()
 
-    #Model selector bar
-    model_options = _build_model_options()
+    model_options = _model_opts()
     bar_left, bar_right = st.columns([1, 1], gap="large")
     with bar_left:
-        model_selection = st.selectbox(
+        model_sel = st.selectbox(
             "LLM Model",
             options=model_options,
             index=0,
-            help="Select provider and model. Ensure the corresponding API key is in your .env file.",
+            help="Select provider and model.",
             label_visibility="collapsed",
         )
     with bar_right:
         use_critic = st.toggle(
             "Agentic Self-Correction",
             value=False,
-            help="Runs a self-correction loop on rewritten bullets. Slower but higher quality results.",
+            help="Runs a self-correction loop on rewritten bullets. Slower but higher quality.",
         )
 
-    display_provider, selected_provider, selected_model = _parse_model_selection(model_selection)
+    display_prov, sel_prov, sel_model = _parse_sel(model_sel)
+
+    _KEY_NAMES = {"gemini": "GEMINI_API_KEY", "claude": "ANTHROPIC_API_KEY", "chatgpt": "OPENAI_API_KEY"}
+    _ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 
     local_endpoint = "http://localhost:11434/api/chat"
-    if selected_provider == "local":
+    if sel_prov == "local":
         local_endpoint = st.text_input(
             "Local API Endpoint",
             value="http://localhost:11434/api/chat",
             help="Default Ollama endpoint.",
         )
-    else:
-        key_missing = False
-        if selected_provider == "gemini" and not os.environ.get("GEMINI_API_KEY"):
-            key_missing = True
-        elif selected_provider == "claude" and not os.environ.get("ANTHROPIC_API_KEY"):
-            key_missing = True
-        elif selected_provider == "chatgpt" and not os.environ.get("OPENAI_API_KEY"):
-            key_missing = True
-        if key_missing:
-            st.error(f"Missing API key for {display_provider}. Please configure it in your .env file.")
+    elif sel_prov in _KEY_NAMES:
+        env_var = _KEY_NAMES[sel_prov]
+        api_key = os.environ.get(env_var)
+        if not api_key or _bad_key(api_key):
+            # writes into .env so it sticks around
+            st.warning(f"No API key found for {display_prov}. Enter it below to get started.")
+            api_key_input = st.text_input(
+                f"{display_prov} API Key",
+                type="password",
+                placeholder=f"Paste your {display_prov} API key here",
+                key=f"api_key_{sel_prov}",
+            )
+            if st.button(f"Save {display_prov} API Key", key=f"save_key_{sel_prov}"):
+                if api_key_input.strip():
+                    lines = []
+                    found = False
+                    if os.path.exists(_ENV_PATH):
+                        with open(_ENV_PATH, "r") as f:
+                            lines = f.readlines()
+                    out = []
+                    for line in lines:
+                        if line.strip().startswith(f"{env_var}="):
+                            out.append(f"{env_var}={api_key_input.strip()}\n")
+                            found = True
+                        else:
+                            out.append(line)
+                    if not found:
+                        out.append(f"\n{env_var}={api_key_input.strip()}\n")
+                    with open(_ENV_PATH, "w") as f:
+                        f.writelines(out)
+                    from dotenv import load_dotenv
+                    load_dotenv(_ENV_PATH, override=True)
+                    st.success(f"{display_prov} API key saved to .env")
+                    st.rerun()
+                else:
+                    st.error("API key cannot be empty.")
             st.stop()
 
     st.markdown('<div class="setup-band">', unsafe_allow_html=True)
@@ -1129,8 +1242,8 @@ def main() -> None:
     left, right = st.columns([0.95, 1.25], gap="large")
 
     with left:
-        st.markdown('<span class="section-label">Resume PDF</span>', unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("Upload Resume", type="pdf", label_visibility="collapsed", key="pdf_upload")
+        st.markdown('<span class="section-label">Resume PDF / DOCX / TXT / MD</span>', unsafe_allow_html=True)
+        uploaded_file = st.file_uploader("Upload Resume", type=["pdf", "docx", "doc", "txt", "md"], label_visibility="collapsed", key="pdf_upload")
         if uploaded_file:
             st.success(f"{uploaded_file.name}")
 
@@ -1147,35 +1260,47 @@ def main() -> None:
     if uploaded_file:
         uploaded_bytes = uploaded_file.getvalue()
         st.session_state.pdf_bytes = uploaded_bytes
-        analyse_clicked = st.button("Analyse resume ✨", use_container_width=True)
+        analyse_clicked = st.button("Analyse resume", use_container_width=True)
         
         current_hash = hash(uploaded_bytes)
+        stale = False
         if st.session_state.get("last_file_hash") != current_hash:
              st.session_state.results = None
              st.session_state.analysed = False
              st.session_state.last_file_hash = current_hash
              st.session_state.accepted = {}
              st.session_state.generated_cv = ""
-             st.session_state.generated_cover_letter = ""
+             st.session_state.gen_cl = ""
+
+        if st.session_state.get("last_use_critic") is not None and st.session_state.get("last_use_critic") != use_critic:
+             st.session_state.results = None
+             st.session_state.analysed = False
+             stale = True
+             st.session_state.accepted = {}
+             st.session_state.generated_cv = ""
+             st.session_state.gen_cl = ""
+        st.session_state.last_use_critic = use_critic
+
+        if stale and not analyse_clicked:
+            st.info("Settings changed, click \"Analyse resume\" to re-run with the new settings.")
 
         if analyse_clicked:
             with st.spinner("Parsing resume..."):
-                parsed = extract_text(uploaded_bytes)
-
+                parsed = parse_file(uploaded_bytes, uploaded_file.name)
             if not parsed.sections and parsed.warnings:
                 for w in parsed.warnings:
                     st.error(w)
                 st.stop()
 
-            with st.spinner(f"Running AI analysis via {display_provider} ({selected_model}) — this may take a few minutes..."):
+            with st.spinner(f"Running AI analysis via {display_prov} ({sel_model}), this may take a few minutes..."):
                 try:
-                    results = analyse_resume(
+                    results = analyse(
                         resume=parsed, 
                         job_description=job_description,
-                        provider=selected_provider,
+                        provider=sel_prov,
                         local_endpoint=local_endpoint,
                         use_critic=use_critic,
-                        model=selected_model,
+                        model=sel_model,
                     )
                     results["parsed_resume_obj"] = parsed
                     st.session_state.parsed_resume = parsed
@@ -1186,17 +1311,49 @@ def main() -> None:
                     st.session_state.score_history.append(score_data)
                     if len(st.session_state.score_history) > 50:
                         st.session_state.score_history = st.session_state.score_history[-50:]
-                    _save_score_history(st.session_state.score_history)
+                    _save_hist(st.session_state.score_history)
+
+                    curr_user = st.session_state.get("current_user")
+                    if curr_user:
+                        import json as _json
+                        db_resume = db.save_resume(
+                            user_id=curr_user["id"],
+                            filename=uploaded_file.name,
+                            raw_bytes=uploaded_bytes,
+                            parsed_json=_json.dumps(parsed.sections)
+                        )
+                        score_total = score_data.get("total", 0) if isinstance(score_data, dict) else int(score_data)
+                        db_analysis = db.save_analysis(
+                            resume_id=db_resume.id,
+                            user_id=curr_user["id"],
+                            results_json=_json.dumps({"rewrites": results["rewrites"], "score": results["score"]}),
+                            job_description=job_description,
+                            provider=sel_prov,
+                            model=sel_model,
+                            score_total=score_total
+                        )
+                        st.session_state.db_analysis_id = db_analysis.id
+                        st.session_state.db_resume_id = db_resume.id
+
                     st.session_state.accepted = {}
                     st.session_state.generated_cv = ""
-                    st.session_state.generated_cover_letter = ""
+                    st.session_state.gen_cl = ""
                     st.session_state.analysed = True
                     st.session_state.trigger_sidebar = True
+                    
+                    if not feedback.is_silenced():
+                        st.session_state.show_feedback = True
+
                 except Exception as e:
-                    st.error(f"Analysis failed. Did you configure {display_provider} correctly? Error: {e}")
+                    st.error(f"Analysis failed. Did you configure {display_prov} correctly? Error: {e}")
                     st.stop()
 
             st.rerun()
+
+    if st.session_state.get("show_feedback"):
+        st.toast(f"Loving RAGsToRiches? [Tell us how we're doing]({feedback.get_forms_url()})")
+        feedback.silence()
+        st.session_state.show_feedback = False
     else:
         st.markdown(
             '<p class="muted" style="text-align:center;padding:0.5rem 0">Upload a PDF resume above to get started.</p>',
@@ -1210,7 +1367,7 @@ def main() -> None:
 
         if r.get("ocr_used"):
             st.markdown(
-                '<div class="ocr-strip">🔍 No text layer detected — OCR was used. '
+                '<div class="ocr-strip">No text layer detected, OCR was used. '
                 'Accuracy may be slightly lower on styled or image-heavy PDFs.</div>',
                 unsafe_allow_html=True,
             )
@@ -1221,19 +1378,19 @@ def main() -> None:
             tooltip_html = "Score breakdown not available"
         else:
             score = score_data.get("total", 0)
-            tooltip_lines = [
+            tl = [
                 f"Base:            {score_data.get('base', 0)}",
                 f"Sections:      +{score_data.get('sections', 0)}",
                 f"Keywords:      +{score_data.get('keywords', 0)}",
                 f"Bullet Quality: +{score_data.get('bullet_quality', 0)}",
                 f"Action Verbs:  +{score_data.get('action_verbs', 0)}",
                 f"Warnings:       {score_data.get('warnings', 0)}",
-                f"{'─' * 26}",
+                f"{'-' * 26}",
                 f"Total:          {score}/100",
             ]
-            tooltip_html = html.escape("\n".join(tooltip_lines))
+            tooltip_html = html.escape("\n".join(tl))
 
-        score_cfg = _get_score_config(score)
+        score_cfg = _score_tier(score)
 
         st.markdown(f"""
         <div class="card" style="margin-bottom: 1rem; background: #FFFFFF; border: 1px solid #E8EAED; border-radius: 16px; padding: 1rem 1.1rem;">
@@ -1243,7 +1400,7 @@ def main() -> None:
                     <div class="score-number" style="color:{score_cfg['color']};">{score}</div>
                     <div class="score-meta">
                         <span class="score-label-text">{score_cfg['label']}</span>
-                        <span class="score-sub">out of 100 · hover for breakdown</span>
+                        <span class="score-sub">out of 100, hover for breakdown</span>
                     </div>
                 </div>
                 <div class="score-tooltip">{tooltip_html}</div>
@@ -1270,10 +1427,9 @@ def main() -> None:
             
             contact = r.get("contact", {})
             if contact:
-                chips = "".join(
-                    f'<span class="contact-chip"><b>{html.escape(k.title())}</b>{html.escape(str(v))}</span>'
-                    for k, v in contact.items()
-                )
+                chips = ""
+                for k, v in contact.items():
+                    chips += f'<span class="contact-chip"><b>{html.escape(k.title())}</b>{html.escape(str(v))}</span>' 
                 st.markdown(f"""
                 <div class="card" style="margin-top:1rem">
                     <span class="section-label">Contact Detected</span>
@@ -1282,7 +1438,10 @@ def main() -> None:
                 """, unsafe_allow_html=True)
         
         
-        warnings = [w for w in r.get("warnings", []) if "not detected" in w.lower() or "corrupt" in w.lower()]
+        warnings = []
+        for w in r.get("warnings", []):
+            if "not detected" in w.lower() or "corrupt" in w.lower():
+                warnings.append(w)
         if warnings:
             st.markdown('<span class="section-label" style="margin-top:0.5rem">Parser Notes</span>', unsafe_allow_html=True)
             for w in warnings:
@@ -1294,25 +1453,64 @@ def main() -> None:
             
             parsed_sections = r.get("sections", {})
             for sec in ["EXPERIENCE", "EDUCATION", "SKILLS", "PROJECTS"]:
-                icon = "✓" if sec in parsed_sections else "✗"
+                icon = "[x]" if sec in parsed_sections else "[ ]"
                 color = "#15C39A" if sec in parsed_sections else "#E5534B"
                 st.markdown(f"<span style='color:{color}'>{icon} {sec.title()}</span>", unsafe_allow_html=True)
                 
             with st.expander("Raw Parsed Output", expanded=False):
                 st.json(parsed_sections)
 
-        nav_options = ["Rewrite Suggestions", "Keyword Gap", "Extracted Sections", "Tailored CV", "Cover Letter", "Analytics"]
+            curr_user = st.session_state.get("current_user", {})
+            if curr_user:
+                st.markdown('<hr style="border-top:1px solid #3C4148">', unsafe_allow_html=True)
+                st.markdown('<span class="section-label" style="color:#A1A5AB;">Collaborative Review</span>', unsafe_allow_html=True)
+                if curr_user.get("role") == "candidate":
+                    session_code = st.text_input("Enter Mentor Session Code")
+                    if st.button("Join Session", key="join_sess_btn"):
+                        if session_code:
+                            rs = db.join_session(session_code, curr_user["id"])
+                            if rs:
+                                st.success(f"Joined session {session_code}!")
+                                st.session_state.active_session_code = session_code
+                            else:
+                                st.error("Invalid or inactive session code.")
+                elif curr_user.get("role") == "mentor":
+                    if st.button("Export Session Report", key="export_mentor_btn"):
+                        report_md = mentor.export_report(curr_user["id"])
+                        st.download_button(
+                            "Download Report (MD)",
+                            data=report_md,
+                            file_name="mentor_report.md",
+                            mime="text/markdown"
+                        )
+
+        nav_options = ["Rewrite Suggestions", "Keyword Gap", "Extracted Sections", "Tailored CV", "Cover Letter", "Analytics", "Mentor Dashboard", "Job Matching"]
+        
+        curr_user = st.session_state.get("current_user", {})
+        if curr_user.get("role") == "mentor":
+            rest = []
+            for n in nav_options:
+                if n != "Mentor Dashboard":
+                    rest.append(n)
+            nav_options = ["Mentor Dashboard"] + rest
+            
         selected_view = st.radio("", nav_options, horizontal=True, label_visibility="collapsed")
 
         if selected_view == "Rewrite Suggestions":
-            _render_rewrites_tab(r.get("rewrites", {}), st.session_state.get("pdf_bytes"))
+            _rewrites_tab(r.get("rewrites", {}), st.session_state.get("pdf_bytes"))
+
+            if st.session_state.get("db_analysis_id") and st.session_state.accepted:
+                db.save_decisions(st.session_state.db_analysis_id, st.session_state.accepted)
 
         elif selected_view == "Keyword Gap":
             jd_kws  = r.get("jd_keywords", [])
             missing = r.get("missing_keywords", [])
-            present = [kw for kw in jd_kws if kw not in missing]
+            present = []
+            for kw in jd_kws:
+                if kw not in missing:
+                    present.append(kw)
             freqs = r.get("keyword_frequencies", {})
-            _render_keywords_tab(jd_kws, missing, present, freqs)
+            _keywords_tab(jd_kws, missing, present, freqs)
 
         elif selected_view == "Extracted Sections":
             sections = r.get("sections", {})
@@ -1327,23 +1525,23 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
             if st.button("Generate CV", key="gen_cv_btn"):
-                acc_rewrites_map = _accepted_rewrite_map(r.get("rewrites", {}))
+                amap = _acc_map(r.get("rewrites", {}))
 
                 with st.spinner("Generating CV..."):
-                    cv_text = generate_cv(
+                    cv_text = gen_cv(
                         st.session_state.parsed_resume,
                         job_description,
-                        acc_rewrites_map,
-                        selected_provider,
+                        amap,
+                        sel_prov,
                         local_endpoint,
                         rewrite_suggestions=r.get("rewrites", {}),
                         rewrite_decisions=st.session_state.accepted,
-                        model=selected_model,
+                        model=sel_model,
                     )
                     st.session_state.generated_cv = cv_text
 
             if st.session_state.get("generated_cv"):
-                st.markdown("### ✏️ Edit Your CV")
+                st.markdown("### Edit Your CV")
                 st.markdown(
                     '<p class="muted">Make any final edits below. Your changes will be reflected in the downloaded files.</p>',
                     unsafe_allow_html=True,
@@ -1355,7 +1553,6 @@ def main() -> None:
                     label_visibility="collapsed",
                     key="cv_editor",
                 )
-                # Sync edits back to session state
                 if edited_cv != st.session_state.generated_cv:
                     st.session_state.generated_cv = edited_cv
 
@@ -1365,7 +1562,7 @@ def main() -> None:
                 dl_col1, dl_col2, dl_col3 = st.columns(3)
                 with dl_col1:
                     st.download_button(
-                        "📄 Download Markdown",
+                        "Download Markdown",
                         st.session_state.generated_cv,
                         "tailored_cv.md",
                         key="dl_md",
@@ -1373,9 +1570,9 @@ def main() -> None:
 
                 with dl_col2:
                     try:
-                        docx_bytes = _generate_docx(st.session_state.generated_cv)
+                        docx_bytes = _mk_docx(st.session_state.generated_cv)
                         st.download_button(
-                            "📝 Download DOCX",
+                            "Download DOCX",
                             docx_bytes,
                             "tailored_cv.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1386,10 +1583,10 @@ def main() -> None:
 
                 with dl_col3:
                     try:
-                        pdf_dl_bytes = _generate_pdf(st.session_state.generated_cv)
+                        pdf_dl_bytes = _gen_pdf(st.session_state.generated_cv)
                         if pdf_dl_bytes:
                             st.download_button(
-                                "📕 Download PDF",
+                                "Download PDF",
                                 pdf_dl_bytes,
                                 "tailored_cv.pdf",
                                 mime="application/pdf",
@@ -1407,48 +1604,48 @@ def main() -> None:
             )
             if st.button("Generate Cover Letter", key="gen_cl_btn"):
                 with st.spinner("Generating cover letter..."):
-                    cl_text = generate_cover_letter(
+                    cl_text = gen_cover_letter(
                         st.session_state.parsed_resume,
                         job_description,
-                        selected_provider,
+                        sel_prov,
                         local_endpoint,
-                        model=selected_model,
+                        model=sel_model,
                     )
-                    st.session_state.generated_cover_letter = cl_text
+                    st.session_state.gen_cl = cl_text
 
-            if st.session_state.get("generated_cover_letter"):
-                st.markdown("### ✏️ Edit Your Cover Letter")
+            if st.session_state.get("gen_cl"):
+                st.markdown("### Edit Your Cover Letter")
                 st.markdown(
                     '<p class="muted">Make any final edits below. Your changes will be reflected in the downloaded files.</p>',
                     unsafe_allow_html=True,
                 )
                 edited_cl = st.text_area(
                     "Edit Cover Letter",
-                    value=st.session_state.generated_cover_letter,
+                    value=st.session_state.gen_cl,
                     height=400,
                     label_visibility="collapsed",
                     key="cl_editor",
                 )
-                if edited_cl != st.session_state.generated_cover_letter:
-                    st.session_state.generated_cover_letter = edited_cl
+                if edited_cl != st.session_state.gen_cl:
+                    st.session_state.gen_cl = edited_cl
 
                 st.markdown("### Preview")
-                st.markdown(st.session_state.generated_cover_letter)
+                st.markdown(st.session_state.gen_cl)
 
                 cl_col1, cl_col2, cl_col3 = st.columns(3)
                 with cl_col1:
                     st.download_button(
-                        "📄 Download Markdown",
-                        st.session_state.generated_cover_letter,
+                        "Download Markdown",
+                        st.session_state.gen_cl,
                         "cover_letter.md",
                         key="dl_cl_md",
                     )
 
                 with cl_col2:
                     try:
-                        cl_docx = _generate_docx(st.session_state.generated_cover_letter)
+                        cl_docx = _mk_docx(st.session_state.gen_cl)
                         st.download_button(
-                            "📝 Download DOCX",
+                            "Download DOCX",
                             cl_docx,
                             "cover_letter.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1459,10 +1656,10 @@ def main() -> None:
 
                 with cl_col3:
                     try:
-                        cl_pdf = _generate_pdf(st.session_state.generated_cover_letter)
+                        cl_pdf = _gen_pdf(st.session_state.gen_cl)
                         if cl_pdf:
                             st.download_button(
-                                "📕 Download PDF",
+                                "Download PDF",
                                 cl_pdf,
                                 "cover_letter.pdf",
                                 mime="application/pdf",
@@ -1483,23 +1680,24 @@ def main() -> None:
                         import altair as alt
                         import pandas as pd
 
-                        # Extract totals
-                        chart_data = []
+                        rows = []
                         for idx, entry in enumerate(history):
                             if isinstance(entry, dict):
-                                chart_data.append({"Attempt": idx + 1, "Score": entry.get("total", 0)})
+                                rows.extend([
+                                    {"Attempt": idx + 1, "Component": "Base", "Points": entry.get("base", 0)},
+                                    {"Attempt": idx + 1, "Component": "Sections", "Points": entry.get("sections", 0)},
+                                    {"Attempt": idx + 1, "Component": "Keywords", "Points": entry.get("keywords", 0)},
+                                    {"Attempt": idx + 1, "Component": "Bullet Quality", "Points": entry.get("bullet_quality", 0)},
+                                    {"Attempt": idx + 1, "Component": "Action Verbs", "Points": entry.get("action_verbs", 0)},
+                                ])
                             else:
-                                chart_data.append({"Attempt": idx + 1, "Score": int(entry)})
+                                rows.append({"Attempt": idx + 1, "Component": "Total", "Points": int(entry)})
 
-                        df = pd.DataFrame(chart_data)
+                        df = pd.DataFrame(rows)
 
                         chart = (
                             alt.Chart(df)
-                            .mark_line(
-                                point=alt.OverlayMarkDef(filled=True, size=60, color="#8b5cf6"),
-                                strokeWidth=2.5,
-                                color="#8b5cf6",
-                            )
+                            .mark_area(opacity=0.8)
                             .encode(
                                 x=alt.X(
                                     "Attempt:Q",
@@ -1508,13 +1706,14 @@ def main() -> None:
                                     axis=alt.Axis(tickMinStep=1, format="d"),
                                 ),
                                 y=alt.Y(
-                                    "Score:Q",
-                                    title="Resume Score",
+                                    "Points:Q",
+                                    title="Score Contribution",
                                     scale=alt.Scale(domain=[0, 100]),
                                 ),
-                                tooltip=["Attempt:Q", "Score:Q"],
+                                color=alt.Color("Component:N", scale=alt.Scale(scheme="category10")),
+                                tooltip=["Attempt:Q", "Component:N", "Points:Q"],
                             )
-                            .properties(height=200)
+                            .properties(height=250)
                             .configure_axis(
                                 labelFontSize=11,
                                 titleFontSize=12,
@@ -1522,8 +1721,9 @@ def main() -> None:
                         )
                         st.altair_chart(chart, use_container_width=True)
                     except ImportError:
-                        # Fallback if altair not installed
-                        scores = [e.get("total", 0) if isinstance(e, dict) else int(e) for e in history]
+                        scores = []
+                        for e in history:
+                            scores.append(e.get("total", 0) if isinstance(e, dict) else int(e))
                         st.line_chart(scores, height=150)
                 elif len(history) == 1:
                     entry = history[0]
@@ -1532,21 +1732,47 @@ def main() -> None:
                 else:
                     st.info("Run multiple analyses to see a trend line.")
 
+                if isinstance(score_data, dict) and "section_scores" in score_data:
+                    st.markdown("### Readability & Quality Heatmap")
+                    sec_scores = score_data.get("section_scores", {})
+                    if sec_scores:
+                        try:
+                            import altair as alt
+                            import pandas as pd
+                            hm = []
+                            for sec_name, data in sec_scores.items():
+                                hm.append({"Section": sec_name.title(), "Quality": data.get("quality", 0)})
+                            if hm:
+                                hm_df = pd.DataFrame(hm)
+                                hm_chart = alt.Chart(hm_df).mark_rect().encode(
+                                    x=alt.X("Section:N", title=None, axis=alt.Axis(labelAngle=0)),
+                                    color=alt.Color("Quality:Q", scale=alt.Scale(scheme="greens"), title="Quality Score"),
+                                    tooltip=["Section:N", "Quality:Q"]
+                                ).properties(height=150)
+                                st.altair_chart(hm_chart, use_container_width=True)
+                        except ImportError:
+                            pass
+
                 st.markdown("### Per-Run Metrics")
                 
                 jd_kws = r.get("jd_keywords", [])
                 missing = r.get("missing_keywords", [])
-                present = [kw for kw in jd_kws if kw not in missing]
+                present = []
+                for kw in jd_kws:
+                    if kw not in missing:
+                        present.append(kw)
                 coverage = (len(present) / len(jd_kws) * 100) if jd_kws else 0
-                
+
                 rewrites = r.get("rewrites", {})
-                improved_bullets = sum(
-                    1 for section in rewrites.values()
-                    for item in section
-                    if isinstance(item, dict)
-                    and item.get("framework_used") not in ("none", "error")
-                    and item.get("original") != item.get("rewritten")
-                )
+                n_improved = 0
+                for arr in rewrites.values():
+                    for item in arr:
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("framework_used") in ("none", "error"):
+                            continue
+                        if item.get("original") != item.get("rewritten"):
+                            n_improved += 1
                 
                 cols = st.columns(2)
                 with cols[0]:
@@ -1555,7 +1781,16 @@ def main() -> None:
                     else:
                         st.metric("Keyword Coverage", f"{coverage:.0f}%")
                 with cols[1]:
-                    st.metric("Bullets Improved", improved_bullets)
+                    st.metric("Bullets Improved", n_improved)
+
+                timing = r.get("timing")
+                if timing:
+                    st.markdown("### Performance Metrics")
+                    tcols = st.columns(4)
+                    tcols[0].metric("Keywords", f"{timing.get('keywords_ms', 0)}ms")
+                    tcols[1].metric("Retrieval", f"{timing.get('retrieval_ms', 0)}ms")
+                    tcols[2].metric("Rewriting", f"{timing.get('rewriting_ms', 0)}ms")
+                    tcols[3].metric("Total", f"{timing.get('total_ms', 0)}ms")
 
                 st.markdown("### Section Completion")
                 st.markdown("This highlights which sections are present in your resume.")
@@ -1566,13 +1801,48 @@ def main() -> None:
                     with cols[i]:
                         has_sec = sec in r.get("sections", {})
                         css_class = "present" if has_sec else "missing"
-                        status = "✓ Present" if has_sec else "✗ Missing"
+                        status = "Present" if has_sec else "Missing"
                         st.markdown(f"""
                         <div class="section-card {css_class}">
                             {sec}<br>
                             <span style="font-size: 0.8em;">{status}</span>
                         </div>
                         """, unsafe_allow_html=True)
+
+        elif selected_view == "Mentor Dashboard":
+            if curr_user.get("role") == "mentor":
+                mentor.render_dash(curr_user["id"])
+            else:
+                st.warning("Mentor Dashboard is only available to mentor accounts.")
+
+        elif selected_view == "Job Matching":
+            st.markdown('<span class="section-label">Recruitment Integration</span>', unsafe_allow_html=True)
+            job_url = st.text_input("Enter Job Description URL (Indeed, LinkedIn, etc.)")
+            if st.button("Scrape Job Description", key="scrape_jd_btn"):
+                if job_url:
+                    with st.spinner("Scraping job description..."):
+                        jd_scraped = job_scraper.scrape_jd(job_url)
+                    st.text_area("Scraped Job Description", value=jd_scraped, height=200)
+                else:
+                    st.error("Please enter a valid URL.")
+
+            st.markdown('<hr class="slim-divider">', unsafe_allow_html=True)
+            
+            st.markdown("### LinkedIn Profile Import")
+            if st.button("Import from LinkedIn", key="linkedin_btn"):
+                st.info("OAuth integration placeholder. Enter LinkedIn URL to scrape public profile instead.")
+            
+            li_url = st.text_input("LinkedIn Profile URL (Public)")
+            if st.button("Scrape LinkedIn Profile", key="scrape_li_btn"):
+                if li_url:
+                    with st.spinner("Scraping LinkedIn profile..."):
+                        li_data = job_scraper.scrape_li(li_url)
+                        if "error" in li_data:
+                            st.error(li_data["error"])
+                        else:
+                            st.json(li_data)
+                else:
+                    st.error("Please enter a LinkedIn Profile URL.")
 
     if st.session_state.get("trigger_sidebar"):
         import streamlit.components.v1 as components
