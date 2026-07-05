@@ -1,4 +1,5 @@
 import html
+import json
 import streamlit as st
 
 try:
@@ -9,32 +10,30 @@ except ImportError:
     ALTAIR_AVAILABLE = False
 
 from db import (
-    get_candidates, get_user_analyses, get_mentor_sessions,
-    create_session_code, get_participants,
+    get_mentor_candidates, get_candidate_analyses, get_mentor_sessions,
+    create_session_code, get_session_participants, get_annotations,
 )
 
 
-def _summary(c: dict) -> dict:
-    arr = get_user_analyses(c["id"])
-    scores = []
-    for a in arr:
-        scores.append(a["score"])
+def _candidate_summary(candidate: dict) -> dict:
+    analyses = get_candidate_analyses(candidate["id"])
+    scores = [a["score"] for a in analyses]
     return {
-        "id": c["id"],
-        "name": c["display_name"],
-        "username": c["username"],
-        "total_analyses": len(arr),
+        "id": candidate["id"],
+        "name": candidate["display_name"],
+        "username": candidate["username"],
+        "total_analyses": len(analyses),
         "latest_score": scores[0] if scores else 0,
         "best_score": max(scores) if scores else 0,
         "scores": scores,
     }
 
 
-def render_dash(user_id: int) -> None:
+def render_mentor_dashboard(user_id: int) -> None:
     st.markdown('<span class="section-label">Mentor Dashboard</span>', unsafe_allow_html=True)
 
-    c1, c2 = st.columns([2, 1])
-    with c1:
+    sess_col, code_col = st.columns([2, 1])
+    with sess_col:
         sessions = get_mentor_sessions(user_id)
         if sessions:
             active = [s for s in sessions if s["active"]]
@@ -44,8 +43,8 @@ def render_dash(user_id: int) -> None:
                 unsafe_allow_html=True,
             )
             for s in active:
-                ps = get_participants(s["code"])
-                names = ", ".join(p["display_name"] for p in ps) or "No participants yet"
+                participants = get_session_participants(s["code"])
+                names = ", ".join(p["display_name"] for p in participants) or "No participants yet"
                 st.markdown(
                     f'<div class="card" style="padding:0.75rem 1rem;">'
                     f'<span style="font-family:monospace;font-size:1.1rem;font-weight:700;color:#8b5cf6;">{s["code"]}</span>'
@@ -58,7 +57,7 @@ def render_dash(user_id: int) -> None:
                 '<p style="color:#6B7280;font-size:0.85rem;">No review sessions yet. Create one to start collaborating.</p>',
                 unsafe_allow_html=True,
             )
-    with c2:
+    with code_col:
         if st.button("Create Review Session", use_container_width=True):
             code = create_session_code(user_id)
             st.success(f"Session created! Share this code with your candidates: **{code}**")
@@ -66,43 +65,41 @@ def render_dash(user_id: int) -> None:
 
     st.markdown('<hr class="slim-divider">', unsafe_allow_html=True)
 
-    candidates = get_candidates(user_id)
+    candidates = get_mentor_candidates(user_id)
     if not candidates:
         st.info("No candidates have joined your review sessions yet. Share a session code to get started.")
         return
 
-    sums = []
-    for c in candidates:
-        sums.append(_summary(c))
+    summaries = [_candidate_summary(c) for c in candidates]
 
     st.markdown('<span class="section-label">Candidate Comparison</span>', unsafe_allow_html=True)
 
-    h = '<div class="card"><table style="width:100%;border-collapse:collapse;font-size:0.84rem;">'
-    h += '<tr style="border-bottom:1px solid #E8EAED;">'
-    h += '<th style="text-align:left;padding:0.5rem;">Candidate</th>'
-    h += '<th style="text-align:center;padding:0.5rem;">Analyses</th>'
-    h += '<th style="text-align:center;padding:0.5rem;">Latest Score</th>'
-    h += '<th style="text-align:center;padding:0.5rem;">Best Score</th>'
-    h += '</tr>'
-    for s in sums:
-        col = "#15C39A" if s["latest_score"] >= 70 else "#E8A735" if s["latest_score"] >= 50 else "#E5534B"
-        h += f'<tr style="border-bottom:1px solid #F7F8FA;">'
-        h += f'<td style="padding:0.5rem;font-weight:600;">{html.escape(s["name"])}</td>'
-        h += f'<td style="text-align:center;padding:0.5rem;">{s["total_analyses"]}</td>'
-        h += f'<td style="text-align:center;padding:0.5rem;color:{col};font-weight:700;">{s["latest_score"]}</td>'
-        h += f'<td style="text-align:center;padding:0.5rem;">{s["best_score"]}</td>'
-        h += '</tr>'
-    h += '</table></div>'
-    st.markdown(h, unsafe_allow_html=True)
+    header = '<div class="card"><table style="width:100%;border-collapse:collapse;font-size:0.84rem;">'
+    header += '<tr style="border-bottom:1px solid #E8EAED;">'
+    header += '<th style="text-align:left;padding:0.5rem;">Candidate</th>'
+    header += '<th style="text-align:center;padding:0.5rem;">Analyses</th>'
+    header += '<th style="text-align:center;padding:0.5rem;">Latest Score</th>'
+    header += '<th style="text-align:center;padding:0.5rem;">Best Score</th>'
+    header += '</tr>'
+    for s in summaries:
+        score_color = "#15C39A" if s["latest_score"] >= 70 else "#E8A735" if s["latest_score"] >= 50 else "#E5534B"
+        header += f'<tr style="border-bottom:1px solid #F7F8FA;">'
+        header += f'<td style="padding:0.5rem;font-weight:600;">{html.escape(s["name"])}</td>'
+        header += f'<td style="text-align:center;padding:0.5rem;">{s["total_analyses"]}</td>'
+        header += f'<td style="text-align:center;padding:0.5rem;color:{score_color};font-weight:700;">{s["latest_score"]}</td>'
+        header += f'<td style="text-align:center;padding:0.5rem;">{s["best_score"]}</td>'
+        header += '</tr>'
+    header += '</table></div>'
+    st.markdown(header, unsafe_allow_html=True)
 
-    if ALTAIR_AVAILABLE and any(len(s["scores"]) > 1 for s in sums):
+    if ALTAIR_AVAILABLE and any(len(s["scores"]) > 1 for s in summaries):
         st.markdown('<span class="section-label" style="margin-top:1rem;">Score Progression</span>', unsafe_allow_html=True)
-        rows = []
-        for s in sums:
-            for i, sc in enumerate(reversed(s["scores"])):
-                rows.append({"Candidate": s["name"], "Attempt": i + 1, "Score": sc})
-        if rows:
-            df = pd.DataFrame(rows)
+        chart_data = []
+        for s in summaries:
+            for idx, score in enumerate(reversed(s["scores"])):
+                chart_data.append({"Candidate": s["name"], "Attempt": idx + 1, "Score": score})
+        if chart_data:
+            df = pd.DataFrame(chart_data)
             chart = (
                 alt.Chart(df)
                 .mark_line(point=alt.OverlayMarkDef(filled=True, size=50), strokeWidth=2)
@@ -116,10 +113,10 @@ def render_dash(user_id: int) -> None:
             )
             st.altair_chart(chart, use_container_width=True)
 
-    for s in sums:
-        with st.expander(f"{s['name']} - {s['total_analyses']} analyses, latest: {s['latest_score']}/100"):
-            arr = get_user_analyses(s["id"])
-            for a in arr[:10]:
+    for s in summaries:
+        with st.expander(f"{s['name']} — {s['total_analyses']} analyses, latest: {s['latest_score']}/100"):
+            analyses = get_candidate_analyses(s["id"])
+            for a in analyses[:10]:
                 st.markdown(
                     f'<div style="font-size:0.82rem;padding:0.3rem 0;border-bottom:1px solid #F7F8FA;">'
                     f'<span style="font-weight:600;">Score: {a["score"]}/100</span>'
@@ -130,14 +127,12 @@ def render_dash(user_id: int) -> None:
                 )
 
 
-def export_report(user_id: int) -> str:
-    candidates = get_candidates(user_id)
-    sums = []
-    for c in candidates:
-        sums.append(_summary(c))
+def export_mentor_report(user_id: int) -> str:
+    candidates = get_mentor_candidates(user_id)
+    summaries = [_candidate_summary(c) for c in candidates]
 
     lines = ["# Mentor Review Report\n"]
-    for s in sums:
+    for s in summaries:
         lines.append(f"## {s['name']} (@{s['username']})")
         lines.append(f"- Total analyses: {s['total_analyses']}")
         lines.append(f"- Latest score: {s['latest_score']}/100")

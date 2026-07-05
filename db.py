@@ -1,7 +1,8 @@
 import os
+import json
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, LargeBinary, DateTime, ForeignKey
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, Float, LargeBinary, DateTime, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 _DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "ragstoriches.db")
 os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
@@ -100,181 +101,212 @@ def get_session():
 
 
 def create_user(username: str, password_hash: str, display_name: str, role: str = "candidate", email: str = "") -> User:
-    s = get_session()
+    session = get_session()
     try:
-        u = User(
+        user = User(
             username=username.strip().lower(),
             password_hash=password_hash,
             display_name=display_name.strip(),
             role=role,
             email=email.strip(),
         )
-        s.add(u)
-        s.commit()
-        s.refresh(u)
-        return u
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
     finally:
-        s.close()
+        session.close()
 
 
-def get_user(username: str) -> User | None:
-    s = get_session()
+def get_user_by_username(username: str) -> User | None:
+    session = get_session()
     try:
-        return s.query(User).filter(User.username == username.strip().lower()).first()
+        return session.query(User).filter(User.username == username.strip().lower()).first()
     finally:
-        s.close()
+        session.close()
 
 
 def save_resume(user_id: int, filename: str, raw_bytes: bytes, parsed_json: str = "{}") -> Resume:
-    s = get_session()
+    session = get_session()
     try:
-        r = Resume(user_id=user_id, filename=filename, raw_bytes=raw_bytes, parsed_json=parsed_json)
-        s.add(r)
-        s.commit()
-        s.refresh(r)
-        return r
+        resume = Resume(user_id=user_id, filename=filename, raw_bytes=raw_bytes, parsed_json=parsed_json)
+        session.add(resume)
+        session.commit()
+        session.refresh(resume)
+        return resume
     finally:
-        s.close()
+        session.close()
 
 
 def save_analysis(resume_id: int, user_id: int, results_json: str, job_description: str, provider: str, model: str, score_total: int) -> Analysis:
-    s = get_session()
+    session = get_session()
     try:
-        a = Analysis(
+        analysis = Analysis(
             resume_id=resume_id, user_id=user_id, results_json=results_json,
             job_description=job_description, provider=provider, model=model, score_total=score_total,
         )
-        s.add(a)
-        s.commit()
-        s.refresh(a)
-        return a
+        session.add(analysis)
+        session.commit()
+        session.refresh(analysis)
+        return analysis
     finally:
-        s.close()
+        session.close()
 
 
 def save_decisions(analysis_id: int, decisions: dict[str, bool]) -> None:
-    s = get_session()
+    session = get_session()
     try:
-        s.query(RewriteDecision).filter(RewriteDecision.analysis_id == analysis_id).delete()
-        for k, v in decisions.items():
-            s.add(RewriteDecision(analysis_id=analysis_id, suggestion_key=k, decision=v))
-        s.commit()
+        session.query(RewriteDecision).filter(RewriteDecision.analysis_id == analysis_id).delete()
+        for key, val in decisions.items():
+            session.add(RewriteDecision(analysis_id=analysis_id, suggestion_key=key, decision=val))
+        session.commit()
     finally:
-        s.close()
+        session.close()
 
 
 def save_annotation(analysis_id: int, user_id: int, suggestion_key: str, comment: str) -> Annotation:
-    s = get_session()
+    session = get_session()
     try:
         ann = Annotation(analysis_id=analysis_id, user_id=user_id, suggestion_key=suggestion_key, comment=comment.strip())
-        s.add(ann)
-        s.commit()
-        s.refresh(ann)
+        session.add(ann)
+        session.commit()
+        session.refresh(ann)
         return ann
     finally:
-        s.close()
+        session.close()
 
 
 def get_annotations(analysis_id: int) -> list[dict]:
-    s = get_session()
+    session = get_session()
     try:
-        rows = s.query(Annotation, User.display_name).join(User, Annotation.user_id == User.id).filter(
+        rows = session.query(Annotation, User.display_name).join(User, Annotation.user_id == User.id).filter(
             Annotation.analysis_id == analysis_id
         ).order_by(Annotation.created_at).all()
-        out = []
-        for ann, name in rows:
-            out.append({"key": ann.suggestion_key, "comment": ann.comment, "user": name, "time": ann.created_at.isoformat()})
-        return out
+        return [
+            {"key": ann.suggestion_key, "comment": ann.comment, "user": name, "time": ann.created_at.isoformat()}
+            for ann, name in rows
+        ]
     finally:
-        s.close()
+        session.close()
 
 
 def create_session_code(mentor_id: int) -> str:
     import secrets
     code = secrets.token_urlsafe(6)[:8].upper()
-    s = get_session()
+    session = get_session()
     try:
         rs = ReviewSession(mentor_id=mentor_id, session_code=code)
-        s.add(rs)
-        s.commit()
+        session.add(rs)
+        session.commit()
         return code
     finally:
-        s.close()
+        session.close()
 
 
 def join_session(session_code: str, user_id: int) -> ReviewSession | None:
-    s = get_session()
+    session = get_session()
     try:
-        rs = s.query(ReviewSession).filter(
+        rs = session.query(ReviewSession).filter(
             ReviewSession.session_code == session_code.strip().upper(),
             ReviewSession.active == True,
         ).first()
         if not rs:
             return None
-        ex = s.query(SessionParticipant).filter(
+        existing = session.query(SessionParticipant).filter(
             SessionParticipant.session_id == rs.id,
             SessionParticipant.user_id == user_id,
         ).first()
-        if not ex:
-            s.add(SessionParticipant(session_id=rs.id, user_id=user_id))
-            s.commit()
+        if not existing:
+            session.add(SessionParticipant(session_id=rs.id, user_id=user_id))
+            session.commit()
         return rs
     finally:
-        s.close()
+        session.close()
 
 
-def get_participants(session_code: str) -> list[dict]:
-    s = get_session()
+def get_session_participants(session_code: str) -> list[dict]:
+    session = get_session()
     try:
-        rs = s.query(ReviewSession).filter(ReviewSession.session_code == session_code.strip().upper()).first()
+        rs = session.query(ReviewSession).filter(ReviewSession.session_code == session_code.strip().upper()).first()
         if not rs:
             return []
-        rows = s.query(User).join(SessionParticipant, SessionParticipant.user_id == User.id).filter(
+        rows = session.query(User).join(SessionParticipant, SessionParticipant.user_id == User.id).filter(
             SessionParticipant.session_id == rs.id
         ).all()
         return [{"id": u.id, "username": u.username, "display_name": u.display_name, "role": u.role} for u in rows]
     finally:
-        s.close()
+        session.close()
 
 
-def get_candidates(mentor_id: int) -> list[dict]:
-    s = get_session()
+def get_mentor_candidates(mentor_id: int) -> list[dict]:
+    session = get_session()
     try:
-        sess = s.query(ReviewSession).filter(ReviewSession.mentor_id == mentor_id).all()
-        cands = {}
-        for rs in sess:
-            ps = s.query(User).join(SessionParticipant, SessionParticipant.user_id == User.id).filter(
+        mentor_sessions = session.query(ReviewSession).filter(ReviewSession.mentor_id == mentor_id).all()
+        candidates = {}
+        for rs in mentor_sessions:
+            participants = session.query(User).join(SessionParticipant, SessionParticipant.user_id == User.id).filter(
                 SessionParticipant.session_id == rs.id,
                 User.role == "candidate",
             ).all()
-            for u in ps:
-                if u.id not in cands:
-                    cands[u.id] = {"id": u.id, "username": u.username, "display_name": u.display_name}
-        return list(cands.values())
+            for u in participants:
+                if u.id not in candidates:
+                    candidates[u.id] = {"id": u.id, "username": u.username, "display_name": u.display_name}
+        return list(candidates.values())
     finally:
-        s.close()
+        session.close()
 
 
 def get_user_analyses(user_id: int) -> list[dict]:
-    s = get_session()
+    session = get_session()
     try:
-        rows = s.query(Analysis).filter(Analysis.user_id == user_id).order_by(Analysis.created_at.desc()).all()
-        out = []
-        for a in rows:
-            out.append({"id": a.id, "resume_id": a.resume_id, "score": a.score_total, "provider": a.provider,
-                        "model": a.model, "created_at": a.created_at.isoformat()})
-        return out
+        rows = session.query(Analysis).filter(Analysis.user_id == user_id).order_by(Analysis.created_at.desc()).all()
+        return [
+            {"id": a.id, "resume_id": a.resume_id, "score": a.score_total, "provider": a.provider,
+             "model": a.model, "created_at": a.created_at.isoformat()}
+            for a in rows
+        ]
     finally:
-        s.close()
+        session.close()
+
+
+def get_candidate_analyses(candidate_id: int) -> list[dict]:
+    return get_user_analyses(candidate_id)
+
+
+def save_revision_snapshot(resume_id: int, analysis_id: int, decisions_json: str, score_total: int) -> None:
+    session = get_session()
+    try:
+        snap = RevisionSnapshot(
+            resume_id=resume_id, analysis_id=analysis_id,
+            decisions_json=decisions_json, score_total=score_total,
+        )
+        session.add(snap)
+        session.commit()
+    finally:
+        session.close()
+
+
+def get_revision_history(resume_id: int) -> list[dict]:
+    session = get_session()
+    try:
+        rows = session.query(RevisionSnapshot).filter(
+            RevisionSnapshot.resume_id == resume_id
+        ).order_by(RevisionSnapshot.created_at).all()
+        return [
+            {"id": s.id, "analysis_id": s.analysis_id, "score": s.score_total, "time": s.created_at.isoformat()}
+            for s in rows
+        ]
+    finally:
+        session.close()
 
 
 def get_mentor_sessions(mentor_id: int) -> list[dict]:
-    s = get_session()
+    session = get_session()
     try:
-        rows = s.query(ReviewSession).filter(ReviewSession.mentor_id == mentor_id).order_by(ReviewSession.created_at.desc()).all()
+        rows = session.query(ReviewSession).filter(ReviewSession.mentor_id == mentor_id).order_by(ReviewSession.created_at.desc()).all()
         return [{"id": rs.id, "code": rs.session_code, "active": rs.active, "created_at": rs.created_at.isoformat()} for rs in rows]
     finally:
-        s.close()
+        session.close()
 
 
 init_db()

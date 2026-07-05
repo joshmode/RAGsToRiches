@@ -1,4 +1,7 @@
-import sys
+import os
+import functools
+import hashlib
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,7 +14,7 @@ except ImportError:
 
 
 @dataclass
-class FrameworkHit:
+class FwHit:
     document:  str
     framework: str
     category:  str
@@ -19,10 +22,10 @@ class FrameworkHit:
 
 
 import threading
-_collection = None
+_col = None
 _lock = threading.Lock()
+_CHROMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
 
-# framework 
 FRAMEWORKS = [
     {"id": "google_xyz", "metadata": {"framework": "Google XYZ", "category": "structure"}, "document": "Google XYZ Formula: Accomplished [X] as measured by [Y], by doing [Z]. X = the achievement, Y = how you prove it with a number, Z = the method or tool used. Example strong: 'Improved model inference speed by 2x, as measured by p95 latency dropping from 800ms to 400ms, by switching to a batched prediction pipeline.' Example weak (before): 'Worked on improving the model speed.' Apply this to every bullet in the experience section. If Y is missing, prompt the user to add a metric."},
     {"id": "star_method", "metadata": {"framework": "STAR", "category": "structure"}, "document": "STAR Method: Situation, Task, Action, Result. Best for project and internship bullets where context matters. Example: 'Facing 30% drop in checkout conversions (S), I was tasked with diagnosing the UX failure (T). I ran A/B tests across 3 UI variants (A), recovering conversions to baseline within 2 weeks (R).' Keep it concise — STAR bullets should still be one or two lines max on a resume. Lead with the result when the impact is strong enough to be a hook."},
@@ -35,41 +38,57 @@ FRAMEWORKS = [
 ]
 
 
-def _get_collection() -> Any:
-    global _collection
+def _get_col() -> Any:
+    global _col
     if not CHROMA_AVAILABLE:
         raise ImportError("ChromaDB is required. Run: pip install chromadb sentence-transformers")
-    
+
     with _lock:
-        if _collection is not None:
-            return _collection
+        if _col is not None:
+            return _col
 
-        _collection = chromadb.PersistentClient(path="./chroma_db").get_or_create_collection(
+        _col = chromadb.PersistentClient(path=_CHROMA_PATH).get_or_create_collection(
             name="resume_frameworks",
-        embedding_function=embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2"),
-        metadata={"hnsw:space": "cosine"}, 
-    )
-
-    # seed if empty
-    if _collection.count() == 0:
-        _collection.upsert(
-            ids=[f["id"] for f in FRAMEWORKS],
-            documents=[f["document"] for f in FRAMEWORKS],
-            metadatas=[f["metadata"] for f in FRAMEWORKS],
+            embedding_function=embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2"),
+            metadata={"hnsw:space": "cosine"},
         )
-    return _collection
+
+        if _col.count() == 0:
+            _col.upsert(
+                ids=[f["id"] for f in FRAMEWORKS],
+                documents=[f["document"] for f in FRAMEWORKS],
+                metadatas=[f["metadata"] for f in FRAMEWORKS],
+            )
+    return _col
 
 
-def query_frameworks(text: str, n_results: int = 3) -> list[FrameworkHit]:
-    """Retrieve the most relevant writing framework guidance for RAG context"""
-    col = _get_collection()
+_fw_cache: dict[str, tuple[float, list[FwHit]]] = {}
+_fw_cache_lock = threading.Lock()
+_CACHE_TTL_SECONDS = 3600
+_cache_hits = 0
+_cache_misses = 0
+
+
+def query_fw(text: str, n_results: int = 3) -> list[FwHit]:
+    """retrieve the most relevant writing framework docs for RAG context."""
+    normalized = " ".join(text.split()).lower()
+    cache_key = f"{hashlib.sha256(normalized.encode('utf-8')).hexdigest()}::{n_results}::v1"
+    global _cache_hits, _cache_misses
+    with _fw_cache_lock:
+        cached = _fw_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < _CACHE_TTL_SECONDS:
+            _cache_hits += 1
+            return cached[1]
+        _cache_misses += 1
+
+    col = _get_col()
     n = min(n_results, col.count())
     if n == 0: return []
 
     res = col.query(query_texts=[text], n_results=n, include=["documents", "metadatas", "distances"])
-    
-    return [
-        FrameworkHit(
+
+    hits = [
+        FwHit(
             document=doc,
             framework=meta.get("framework", ""),
             category=meta.get("category", ""),
@@ -77,3 +96,15 @@ def query_frameworks(text: str, n_results: int = 3) -> list[FrameworkHit]:
         )
         for doc, meta, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0])
     ]
+
+    with _fw_cache_lock:
+        if len(_fw_cache) > 256:
+            _fw_cache.clear()
+        _fw_cache[cache_key] = (time.monotonic(), hits)
+
+    return hits
+
+
+def get_cache_stats() -> dict[str, int]:
+    with _fw_cache_lock:
+        return {"hits": _cache_hits, "misses": _cache_misses, "entries": len(_fw_cache)}
