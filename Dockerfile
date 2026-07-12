@@ -17,4 +17,7 @@ COPY . .
 
 EXPOSE 5001
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5001", "--workers", "2", "--timeout", "180", "engine_api:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:5001", \
+     "--workers", "1", "--threads", "8", "--worker-class", "gthread", \
+     "--timeout", "300", "--max-requests", "200", "--max-requests-jitter", "50", \
+     "engine_api:app"]
