@@ -27,11 +27,11 @@ const ENGINE_URL = process.env.ENGINE_URL || "http://localhost:5001"
 
 getDb()
 
-// needed for correct client IPs / secure cookies behind a reverse proxy
+// needed for secure cookies behind a reverse proxy
 app.set("trust proxy", 1)
 
 app.use(helmet({
-    contentSecurityPolicy: false, // client is a same-origin SPA bundle, default CSP would block it
+    contentSecurityPolicy: false, 
 }))
 
 const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
@@ -41,7 +41,7 @@ const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
 
 app.use(cors({
     origin(origin, callback) {
-        // no Origin header means same-origin (server-rendered page, curl, healthchecks) — always allow
+        // no Origin header means same-origin 
         if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
         callback(new Error("Not allowed by CORS"))
     },
@@ -49,7 +49,7 @@ app.use(cors({
 }))
 app.use(express.json({ limit: "50mb" }))
 
-// express.json() throws SyntaxError on malformed bodies, keep the response JSON
+// express.json() throws SyntaxError 
 app.use((err, _req, res, next) => {
     if (err?.type === "entity.parse.failed" || err instanceof SyntaxError) {
         return res.status(400).json({ error: "Malformed JSON in request body." })
@@ -85,7 +85,7 @@ app.get("*", (_req, res) => {
     res.sendFile(path.join(clientDist, "index.html"))
 })
 
-// final safety net so an uncaught error is still a JSON response, not a crash
+// final safety net so an uncaught error still responds 
 app.use((err, _req, res, _next) => {
     if (err?.message === "Not allowed by CORS") {
         return res.status(403).json({ error: "This origin is not permitted to access the API." })

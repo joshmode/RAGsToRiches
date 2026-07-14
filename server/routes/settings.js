@@ -1,33 +1,59 @@
 import { Router } from "express"
 import fetch from "node-fetch"
 import { authenticateToken } from "../middleware/auth.js"
+import { BYOK_PROVIDERS, saveUserApiKey, deleteUserApiKey, hasUserApiKey } from "../userKeys.js"
 
 const router = Router()
 
+
 router.get("/env-status", authenticateToken, async (req, res) => {
+    const status = {}
+    for (const provider of BYOK_PROVIDERS) {
+        status[provider] = hasUserApiKey(req.user.id, provider)
+    }
+    status.localAllowed = process.env.ALLOW_LOCAL_PROVIDER === "true"
+
     const engineUrl = req.app.locals.engineUrl
     try {
         const engineRes = await fetch(`${engineUrl}/env-status`)
-        const data = await engineRes.json()
-        res.json(data)
+        const engineStatus = await engineRes.json()
+        status.default = !!engineStatus.openrouter
+        status.linkedin = !!engineStatus.linkedin
+    } catch {
+        status.default = false
+        status.linkedin = false
+    }
+    res.json(status)
+})
+
+router.post("/api-key", authenticateToken, (req, res) => {
+    const provider = String(req.body.provider || "")
+    const key = String(req.body.key || "").trim()
+
+    if (!BYOK_PROVIDERS.has(provider)) {
+        return res.status(400).json({ error: "Unknown provider." })
+    }
+    if (!key) {
+        return res.status(400).json({ error: "Key cannot be empty." })
+    }
+    if (/[\r\n]/.test(key)) {
+        return res.status(400).json({ error: "Key contains invalid characters." })
+    }
+
+    try {
+        saveUserApiKey(req.user.id, provider, key)
+        res.json({ ok: true })
     } catch (err) {
-        res.status(500).json({ error: `Failed to check env status: ${err.message}` })
+        res.status(500).json({ error: `Failed to save key: ${err.message}` })
     }
 })
 
-router.post("/api-key", authenticateToken, async (req, res) => {
-    const engineUrl = req.app.locals.engineUrl
-    try {
-        const engineRes = await fetch(`${engineUrl}/save-api-key`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(req.body),
-        })
-        const data = await engineRes.json()
-        res.json(data)
-    } catch (err) {
-        res.status(500).json({ error: `Failed to save API key: ${err.message}` })
+router.delete("/api-key/:provider", authenticateToken, (req, res) => {
+    if (!BYOK_PROVIDERS.has(req.params.provider)) {
+        return res.status(400).json({ error: "Unknown provider." })
     }
+    deleteUserApiKey(req.user.id, req.params.provider)
+    res.json({ ok: true })
 })
 
 router.get("/feedback-status", async (req, res) => {

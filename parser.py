@@ -1,18 +1,19 @@
 # pyrefly
 import fitz
+import importlib.util
 import re
-import numpy as np
 import csv
 import io
 import zipfile
 from dataclasses import dataclass, field
 
-try:
-    import easyocr
-    import pdf2image
-    OCR_AVAILABLE = True
-except ImportError:
-    OCR_AVAILABLE = False
+# find_spec checks availability without importing torch
+def _ocr_installed() -> bool:
+    return (
+        importlib.util.find_spec("easyocr") is not None
+        and importlib.util.find_spec("pdf2image") is not None
+        and importlib.util.find_spec("numpy") is not None
+    )
 
 # easyocr Reader only initialised once 
 _reader = None
@@ -20,6 +21,7 @@ _reader = None
 def _get_reader():
     global _reader
     if _reader is None:
+        import easyocr
         _reader = easyocr.Reader(["en"], gpu=False)  # set gpu=True if you have CUDA
     return _reader
 
@@ -215,8 +217,11 @@ def _is_scan(lines: list[str]) -> bool:
     return len(useful) < 10
 
 def _ocr_fallback(raw: bytes) -> list[str]:
-    if not OCR_AVAILABLE:
+    if not _ocr_installed():
         return []
+
+    import numpy as np
+    import pdf2image
 
     reader = _get_reader()
     images = pdf2image.convert_from_bytes(raw, dpi=300)
@@ -409,7 +414,8 @@ def _lines_to_resume(all_lines: list[str], result: ParsedResume | None = None) -
             current = canonical
             if current not in sections:
                 sections[current] = []
-        elif not canonical:
+        else:
+            # canonical == current 
             sections[current].append(line)
 
     contact_vals = set(result.contact.values())
@@ -447,7 +453,7 @@ def parse_pdf(pdf_file) -> ParsedResume:
     doc.close()
 
     if _is_scan(all_lines):
-        if not OCR_AVAILABLE:
+        if not _ocr_installed():
             result.warnings.append("PDF appears scanned but easyocr isn't installed. \n Run: pip install easyocr pdf2image Pillow numpy \n Also install poppler for pdf2image, open README for instructions")
             return result
 

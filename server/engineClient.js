@@ -8,7 +8,7 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-// retries a whole engine call with backoff+jitter on 429, on top of router.py's own per-call retries
+// retries a whole engine call
 export async function fetchEngineWithRetry(url, options, attempt = 0) {
     const res = await fetch(url, options)
 
@@ -18,7 +18,7 @@ export async function fetchEngineWithRetry(url, options, attempt = 0) {
             const body = await res.clone().json()
             retryAfterSec = Number(body.retry_after) || 0
         } catch {
-            // engine didn't return a JSON body we could read a retry_after from
+            // engine didn't return a JSON body
         }
         const backoffMs = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** attempt)
         const jitterMs = Math.random() * 500

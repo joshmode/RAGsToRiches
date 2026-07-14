@@ -1147,7 +1147,7 @@ def _keywords_tab(jd_kws: list[str], missing: list[str], present: list[str], fre
     miss_col, have_col = st.columns(2, gap="large")
 
     with miss_col:
-        st.markdown(f'<span class="section-label">❌ Missing ({len(missing)})</span>', unsafe_allow_html=True)
+        st.markdown(f'<span class="section-label"> Missing ({len(missing)})</span>', unsafe_allow_html=True)
         chips = "".join(f'<span class="kw-missing">{html.escape(kw)}</span>' for kw in missing)
         st.markdown(
             f'<div class="kw-wrap">{chips or "<i style=\'color:#a1a1aa\'>None — great coverage!</i>"}</div>',
@@ -1155,7 +1155,7 @@ def _keywords_tab(jd_kws: list[str], missing: list[str], present: list[str], fre
         )
 
     with have_col:
-        st.markdown(f'<span class="section-label">✅ Present ({len(present)})</span>', unsafe_allow_html=True)
+        st.markdown(f'<span class="section-label"> Present ({len(present)})</span>', unsafe_allow_html=True)
         chips = "".join(f'<span class="kw-present">{html.escape(kw)} <span style="opacity:0.7;font-size:0.8em">({freqs.get(kw, 0)})</span></span>' for kw in present)
         st.markdown(
             f'<div class="kw-wrap">{chips or "<i style=\'color:#a1a1aa\'>No matches found</i>"}</div>',
@@ -1546,7 +1546,7 @@ def main() -> None:
                     st.session_state.generated_cv = cv_text
 
             if st.session_state.get("generated_cv"):
-                st.markdown("### ✏️ Edit Your CV")
+                st.markdown("### Edit Your CV")
                 st.markdown(
                     '<p class="muted">Make any final edits below. Your changes will be reflected in the downloaded files.</p>',
                     unsafe_allow_html=True,
@@ -1620,7 +1620,7 @@ def main() -> None:
                     st.session_state.generated_cover_letter = cl_text
 
             if st.session_state.get("generated_cover_letter"):
-                st.markdown("### ✏️ Edit Your Cover Letter")
+                st.markdown("### Edit Your Cover Letter")
                 st.markdown(
                     '<p class="muted">Make any final edits below. Your changes will be reflected in the downloaded files.</p>',
                     unsafe_allow_html=True,
@@ -1728,7 +1728,7 @@ def main() -> None:
                         )
                         st.altair_chart(chart, use_container_width=True)
                     except ImportError:
-                        # fallback if altair not installed
+                        # fallback 
                         scores = [e.get("total", 0) if isinstance(e, dict) else int(e) for e in history]
                         st.line_chart(scores, height=150)
                 elif len(history) == 1:

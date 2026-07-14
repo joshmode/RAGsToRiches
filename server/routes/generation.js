@@ -10,7 +10,7 @@ import { resolveProviderForRequest, ProviderResolutionError } from "../userKeys.
 const router = Router()
 const PROVIDER_CHOICES = new Set(["default", "gemini", "claude", "chatgpt", "local"])
 
-// builds the payload fresh so a client can't smuggle its own api_key/model in
+
 function buildEnginePayload(req, res, extraFields) {
     const provider = req.body.provider
     if (!PROVIDER_CHOICES.has(provider)) {

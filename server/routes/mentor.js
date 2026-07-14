@@ -6,7 +6,7 @@ import crypto from "crypto"
 
 const router = Router()
 
-// classic LCS line diff — enough to show a resume revision like a small PR
+// lcs line diff thanks leetcode 
 function diffLines(before, after) {
     const n = before.length, m = after.length
     const lcs = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
@@ -31,7 +31,7 @@ function diffLines(before, after) {
     return out
 }
 
-// resume text with accepted rewrites applied, so the diff shows real revisions
+// resume text with accepted rewrites applied
 function appliedSections(results) {
     const sections = results?.parsed_resume?.sections || results?.sections || {}
     const rewrites = results?.rewrites || {}
@@ -203,7 +203,7 @@ router.get("/candidates/:candidateId/history", authenticateToken, requireRole("m
     })
 })
 
-// full analysis detail, same shape the candidate sees
+// full analysis details
 router.get("/candidates/:candidateId/analyses/:analysisId", authenticateToken, requireRole("mentor"), (req, res) => {
     const candidateId = parseInt(req.params.candidateId)
     if (!mentorSessionForCandidate(req.user.id, candidateId, { activeOnly: false })) {
@@ -220,7 +220,7 @@ router.get("/candidates/:candidateId/analyses/:analysisId", authenticateToken, r
     })
 })
 
-// pr-style per-section diff between two analyses of the same candidate
+// per-section diff between two analyses of the same candidate
 router.get("/candidates/:candidateId/diff", authenticateToken, requireRole("mentor"), (req, res) => {
     const candidateId = parseInt(req.params.candidateId)
     if (!mentorSessionForCandidate(req.user.id, candidateId, { activeOnly: false })) {
@@ -246,7 +246,7 @@ router.get("/candidates/:candidateId/diff", authenticateToken, requireRole("ment
     })
 })
 
-// a comment, or a suggested edit (original_text -> suggested_text)
+// a comment or a suggested edit
 router.post("/feedback", authenticateToken, requireRole("mentor"), (req, res) => {
     const { candidate_id, analysis_id, suggestion_key, feedback_type, section, original_text, suggested_text, comment } = req.body
     const candidateId = parseInt(candidate_id)
@@ -277,7 +277,7 @@ router.post("/feedback", authenticateToken, requireRole("mentor"), (req, res) =>
     res.status(201).json({ id: row.lastInsertRowid })
 })
 
-// Mentor's sent feedback (optionally per candidate) with current status.
+// Mentor's sent feedback 
 router.get("/feedback", authenticateToken, requireRole("mentor"), (req, res) => {
     const db = getDb()
     const candidateId = req.query.candidate_id ? parseInt(req.query.candidate_id) : null
@@ -295,7 +295,7 @@ router.get("/feedback", authenticateToken, requireRole("mentor"), (req, res) => 
     res.json(rows)
 })
 
-// Candidate's inbox: all feedback addressed to them, newest first.
+// Candidate's inbox all feedback addressed to them newest first.
 router.get("/feedback/inbox", authenticateToken, (req, res) => {
     const db = getDb()
     const rows = db.prepare(`
@@ -306,7 +306,7 @@ router.get("/feedback/inbox", authenticateToken, (req, res) => {
     res.json(rows)
 })
 
-// Candidate resolves a feedback item (accepted / dismissed / open).
+// Candidate resolves a feedback item 
 router.post("/feedback/:id/status", authenticateToken, (req, res) => {
     const status = String(req.body.status || "")
     if (!["open", "accepted", "dismissed"].includes(status)) {

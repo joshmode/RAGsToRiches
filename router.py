@@ -14,9 +14,7 @@ _PLACEHOLDER_VALS = {
     "insert_key_here", "placeholder",
 }
 
-# "default" resolves to openrouter server-side before it ever reaches here.
-# groq is kept below (fully working, just unused by default) rather than removed -
-# switch "default" back to it in userKeys.js if openrouter ever falls out of favor too.
+# "default" resolves to openrouter 
 _PROVIDER_LIMITS = {
     "gemini":     int(os.environ.get("GEMINI_MAX_CONCURRENCY", "4")),
     "claude":     int(os.environ.get("CLAUDE_MAX_CONCURRENCY", "3")),
@@ -40,9 +38,7 @@ _DEFAULT_MODELS = {
     "local":      os.environ.get("LOCAL_DEFAULT_MODEL", "llama3"),
 }
 
-# if a pinned free-tier model gets pulled mid-deployment (as qwen3.6-plus:free did), fall back
-# to OpenRouter's own auto-router across whatever free models are still live, instead of just
-# failing outright. Only openrouter needs this - the other providers are stable paid APIs.
+# if a pinned free-tier model gets pulled (as qwen did lol) fall back
 _FALLBACK_MODELS = {
     "openrouter": os.environ.get("OPENROUTER_FALLBACK_MODEL", "openrouter/free"),
 }
@@ -223,8 +219,7 @@ def _dispatch(
                     return res.choices[0].message.content
 
                 elif provider == "groq":
-                    # kept working but unused by default (see _PROVIDER_LIMITS comment above) -
-                    # groq's api is openai-compatible, reuse the sdk with a different base_url
+                    # kept working but unused by default
                     import openai
                     key = _resolve_key("Groq", "GROQ_API_KEY", api_key)
                     mdl = model
@@ -261,7 +256,7 @@ def _dispatch(
             last_err = e
             err_str = str(e).lower()
             if attempt < max_retries - 1:
-                # jitter spreads concurrent retries out so they don't all re-trip the limit together
+                # jitter spreads concurrent retries out
                 if any(x in err_str for x in ["429", "too many requests", "quota"]):
                     time.sleep(min(60, 4 * (2 ** attempt)) + random.uniform(0, 1))
                     continue
