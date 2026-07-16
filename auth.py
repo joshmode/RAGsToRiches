@@ -1,17 +1,17 @@
 import bcrypt
 import streamlit as st
-from db import create_user, get_user
+from db import create_user, get_user_by_username
 
 
-def hash_pw(pw: str) -> str:
-    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
-def check_pw(pw: str, hashed: str) -> bool:
-    return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
 
-def render_auth() -> dict | None:
+def render_auth_page() -> dict | None:
     if st.session_state.get("current_user"):
         return st.session_state["current_user"]
 
@@ -22,26 +22,26 @@ def render_auth() -> dict | None:
     </div>
     """, unsafe_allow_html=True)
 
-    t1, t2 = st.tabs(["Sign In", "Register"])
+    tab_login, tab_register = st.tabs(["Sign In", "Register"])
 
-    with t1:
+    with tab_login:
         login_user = st.text_input("Username", key="login_username", placeholder="Enter your username")
         login_pass = st.text_input("Password", type="password", key="login_password", placeholder="Enter your password")
         if st.button("Sign In", key="login_btn", use_container_width=True):
             if not login_user.strip() or not login_pass.strip():
                 st.error("Username and password are required.")
             else:
-                u = get_user(login_user)
-                if u and check_pw(login_pass, u.password_hash):
+                user = get_user_by_username(login_user)
+                if user and verify_password(login_pass, user.password_hash):
                     st.session_state["current_user"] = {
-                        "id": u.id, "username": u.username,
-                        "display_name": u.display_name, "role": u.role,
+                        "id": user.id, "username": user.username,
+                        "display_name": user.display_name, "role": user.role,
                     }
                     st.rerun()
                 else:
                     st.error("Invalid username or password.")
 
-    with t2:
+    with tab_register:
         reg_display = st.text_input("Display Name", key="reg_display", placeholder="Your full name")
         reg_user = st.text_input("Username", key="reg_username", placeholder="Choose a username")
         reg_email = st.text_input("Email (optional)", key="reg_email", placeholder="you@example.com")
@@ -56,11 +56,11 @@ def render_auth() -> dict | None:
                 st.error("Passwords do not match.")
             elif len(reg_pass) < 6:
                 st.error("Password must be at least 6 characters.")
-            elif get_user(reg_user):
+            elif get_user_by_username(reg_user):
                 st.error("Username already taken.")
             else:
-                hashed = hash_pw(reg_pass)
-                u = create_user(
+                hashed = hash_password(reg_pass)
+                user = create_user(
                     username=reg_user,
                     password_hash=hashed,
                     display_name=reg_display,
@@ -68,10 +68,10 @@ def render_auth() -> dict | None:
                     email=reg_email,
                 )
                 st.session_state["current_user"] = {
-                    "id": u.id, "username": u.username,
-                    "display_name": u.display_name, "role": u.role,
+                    "id": user.id, "username": user.username,
+                    "display_name": user.display_name, "role": user.role,
                 }
-                st.success(f"Account created! Welcome, {u.display_name}.")
+                st.success(f"Account created! Welcome, {user.display_name}.")
                 st.rerun()
 
     st.stop()
