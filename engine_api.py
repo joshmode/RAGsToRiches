@@ -1,9 +1,13 @@
+import logging
 import os
 import json
 import base64
 import io
 from flask import Flask, request, jsonify, send_file
+from werkzeug.exceptions import HTTPException
 from dotenv import load_dotenv, dotenv_values
+
+logging.basicConfig(level=logging.INFO)
 
 _ENV_PATH = os.environ.get(
     "LOCAL_ENV_PATH",
@@ -29,7 +33,26 @@ import feedback
 
 app = Flask(__name__)
 
-_KEY_NAMES = {"gemini": "GEMINI_API_KEY", "claude": "ANTHROPIC_API_KEY", "chatgpt": "OPENAI_API_KEY"}
+# 25MB file limit plus base64/json overhead, reject oversized bodies before buffering
+app.config["MAX_CONTENT_LENGTH"] = 40 * 1024 * 1024
+
+
+@app.errorhandler(HTTPException)
+def _handle_http_exception(e: HTTPException):
+    return jsonify({"error": e.description or e.name}), e.code
+
+
+@app.errorhandler(Exception)
+def _handle_unexpected_exception(e: Exception):
+    app.logger.exception("unhandled engine error")
+    return jsonify({"error": "Internal server error. Please try again."}), 500
+
+
+def _get_json_body() -> dict:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return {}
+    return data
 
 
 def _resume_from_json(data: dict) -> ParsedResume:
@@ -59,7 +82,7 @@ def health():
 
 @app.route("/parse", methods=["POST"])
 def parse_endpoint():
-    data = request.get_json()
+    data = _get_json_body()
     file_b64 = data.get("file", "")
     filename = data.get("filename", "resume.pdf")
 
@@ -75,13 +98,14 @@ def parse_endpoint():
 
 @app.route("/analyse", methods=["POST"])
 def analyse_endpoint():
-    data = request.get_json()
+    data = _get_json_body()
     resume = _resume_from_json(data.get("resume_json", {}))
     jd = data.get("job_description", "")
     provider = data.get("provider", "gemini")
     model = data.get("model", "")
     use_critic = data.get("use_critic", False)
     local_endpoint = data.get("local_endpoint", "")
+    api_key = data.get("api_key", "")
 
     results = analyse(
         resume=resume,
@@ -90,6 +114,7 @@ def analyse_endpoint():
         local_endpoint=local_endpoint,
         use_critic=use_critic,
         model=model,
+        api_key=api_key,
     )
     results.pop("parsed_resume_obj", None)
     return jsonify(results)
@@ -97,13 +122,14 @@ def analyse_endpoint():
 
 @app.route("/gen-cv", methods=["POST"])
 def gen_cv_endpoint():
-    data = request.get_json()
+    data = _get_json_body()
     resume = _resume_from_json(data.get("resume_json", {}))
     jd = data.get("job_description", "")
     acc_map = data.get("acc_map", {})
     provider = data.get("provider", "gemini")
     model = data.get("model", "")
     local_endpoint = data.get("local_endpoint", "")
+    api_key = data.get("api_key", "")
     suggestions = data.get("rewrite_suggestions", None)
     decisions = data.get("rewrite_decisions", None)
 
@@ -112,26 +138,28 @@ def gen_cv_endpoint():
         rewrite_suggestions=suggestions,
         rewrite_decisions=decisions,
         model=model,
+        api_key=api_key,
     )
     return jsonify({"cv_text": cv_text})
 
 
 @app.route("/gen-cover-letter", methods=["POST"])
 def gen_cover_letter_endpoint():
-    data = request.get_json()
+    data = _get_json_body()
     resume = _resume_from_json(data.get("resume_json", {}))
     jd = data.get("job_description", "")
     provider = data.get("provider", "gemini")
     model = data.get("model", "")
     local_endpoint = data.get("local_endpoint", "")
+    api_key = data.get("api_key", "")
 
-    cl_text = gen_cover_letter(resume, jd, provider, local_endpoint, model=model)
+    cl_text = gen_cover_letter(resume, jd, provider, local_endpoint, model=model, api_key=api_key)
     return jsonify({"cover_letter_text": cl_text})
 
 
 @app.route("/export-docx", methods=["POST"])
 def export_docx_endpoint():
-    text = request.get_json().get("text", "")
+    text = _get_json_body().get("text", "")
     try:
         data = generate_docx(text)
         return send_file(
@@ -146,7 +174,7 @@ def export_docx_endpoint():
 
 @app.route("/export-pdf", methods=["POST"])
 def export_pdf_endpoint():
-    text = request.get_json().get("text", "")
+    text = _get_json_body().get("text", "")
     try:
         data = generate_pdf(text)
         return send_file(
@@ -161,7 +189,7 @@ def export_pdf_endpoint():
 
 @app.route("/highlight-pdf", methods=["POST"])
 def highlight_pdf_endpoint():
-    data = request.get_json()
+    data = _get_json_body()
     try:
         raw = base64.b64decode(data.get("file", ""), validate=True)
         rendered, active_page = highlight_pdf(raw, data.get("items", []), data.get("active_key", ""))
@@ -174,7 +202,7 @@ def highlight_pdf_endpoint():
 
 @app.route("/scrape-jd", methods=["POST"])
 def scrape_jd_endpoint():
-    data = request.get_json()
+    data = _get_json_body()
     url = data.get("url", "")
     text = job_scraper.scrape_jd(url)
     return jsonify({"text": text})
@@ -182,7 +210,7 @@ def scrape_jd_endpoint():
 
 @app.route("/scrape-linkedin", methods=["POST"])
 def scrape_linkedin_endpoint():
-    data = request.get_json()
+    data = _get_json_body()
     url = data.get("url", "")
     profile = job_scraper.scrape_linkedin_profile(url)
     return jsonify({"profile": profile})
@@ -190,69 +218,33 @@ def scrape_linkedin_endpoint():
 
 @app.route("/compare-resume-jd", methods=["POST"])
 def compare_endpoint():
-    data = request.get_json()
+    data = _get_json_body()
     resume_text = data.get("resume_text", "")
     jd_text = data.get("jd_text", "")
     provider = data.get("provider", "gemini")
     model = data.get("model", "")
     local_endpoint = data.get("local_endpoint", "")
+    api_key = data.get("api_key", "")
 
-    result = job_scraper.compare_resume_jd(resume_text, jd_text, provider, local_endpoint, model=model)
+    result = job_scraper.compare_resume_jd(resume_text, jd_text, provider, local_endpoint, model=model, api_key=api_key)
     return jsonify(result)
 
 
 @app.route("/env-status", methods=["GET"])
 def env_status():
+    # per-user byok keys live encrypted in the express db now, this is just the pooled secrets.
+    # groq is kept reported here even though "default" no longer resolves to it - the provider
+    # itself still works, just isn't wired up as the pooled tier anymore
     _load_env()
-    status = {}
-    for display, env_var in _KEY_NAMES.items():
-        val = os.environ.get(env_var, "")
-        status[display] = bool(val) and not _is_key_placeholder(val)
-
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
     li_id = os.environ.get("LINKEDIN_CLIENT_ID", "")
     li_secret = os.environ.get("LINKEDIN_CLIENT_SECRET", "")
-    status["linkedin"] = bool(li_id) and not _is_key_placeholder(li_id) and bool(li_secret) and not _is_key_placeholder(li_secret)
-    return jsonify(status)
-
-
-@app.route("/save-api-key", methods=["POST"])
-def save_api_key():
-    if os.environ.get("ALLOW_LOCAL_KEY_WRITE", "true").lower() != "true":
-        return jsonify({"ok": False, "error": "Local API key storage is disabled."}), 403
-
-    data = request.get_json()
-    provider = data.get("provider", "")
-    key = data.get("key", "").strip()
-
-    env_var = _KEY_NAMES.get(provider)
-    if not env_var:
-        return jsonify({"ok": False, "error": "Unknown provider"}), 400
-    if not key:
-        return jsonify({"ok": False, "error": "Key cannot be empty"}), 400
-    if "\n" in key or "\r" in key:
-        return jsonify({"ok": False, "error": "Key contains invalid characters"}), 400
-
-    lines = []
-    key_found = False
-    if os.path.exists(_ENV_PATH):
-        with open(_ENV_PATH, "r") as f:
-            lines = f.readlines()
-
-    new_lines = []
-    for line in lines:
-        if line.strip().startswith(f"{env_var}="):
-            new_lines.append(f"{env_var}={key}\n")
-            key_found = True
-        else:
-            new_lines.append(line)
-    if not key_found:
-        new_lines.append(f"\n{env_var}={key}\n")
-
-    with open(_ENV_PATH, "w") as f:
-        f.writelines(new_lines)
-
-    load_dotenv(_ENV_PATH, override=True)
-    return jsonify({"ok": True})
+    return jsonify({
+        "groq": bool(groq_key) and not _is_key_placeholder(groq_key),
+        "openrouter": bool(openrouter_key) and not _is_key_placeholder(openrouter_key),
+        "linkedin": bool(li_id) and not _is_key_placeholder(li_id) and bool(li_secret) and not _is_key_placeholder(li_secret),
+    })
 
 
 @app.route("/feedback-status", methods=["GET"])
