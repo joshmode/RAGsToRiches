@@ -18,6 +18,7 @@ function initDb(db) {
             display_name TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'candidate',
             email TEXT DEFAULT '',
+            is_guest INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS resumes (
@@ -38,6 +39,7 @@ function initDb(db) {
             provider TEXT DEFAULT '',
             model TEXT DEFAULT '',
             score_total INTEGER DEFAULT 0,
+            content_hash TEXT DEFAULT '',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (resume_id) REFERENCES resumes(id),
             FOREIGN KEY (user_id) REFERENCES users(id)
@@ -142,7 +144,89 @@ function initDb(db) {
             FOREIGN KEY (user_id) REFERENCES users(id),
             FOREIGN KEY (analysis_id) REFERENCES analyses(id)
         );
+        CREATE TABLE IF NOT EXISTS mentor_feedback (
+            id INTEGER PRIMARY KEY,
+            session_id INTEGER NOT NULL,
+            mentor_id INTEGER NOT NULL,
+            candidate_id INTEGER NOT NULL,
+            analysis_id INTEGER,
+            suggestion_key TEXT DEFAULT '',
+            feedback_type TEXT NOT NULL DEFAULT 'comment',
+            section TEXT DEFAULT '',
+            original_text TEXT DEFAULT '',
+            suggested_text TEXT DEFAULT '',
+            comment TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES review_sessions(id),
+            FOREIGN KEY (mentor_id) REFERENCES users(id),
+            FOREIGN KEY (candidate_id) REFERENCES users(id),
+            FOREIGN KEY (analysis_id) REFERENCES analyses(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mentor_feedback_candidate ON mentor_feedback(candidate_id, status);
+        CREATE INDEX IF NOT EXISTS idx_mentor_feedback_mentor ON mentor_feedback(mentor_id);
+        CREATE TABLE IF NOT EXISTS user_api_keys (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            provider TEXT NOT NULL,
+            encrypted_key TEXT NOT NULL,
+            iv TEXT NOT NULL,
+            auth_tag TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, provider),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
     `)
+
+
+    const columns = db.prepare("PRAGMA table_info(analyses)").all().map(col => col.name)
+    if (!columns.includes("content_hash")) {
+        db.exec("ALTER TABLE analyses ADD COLUMN content_hash TEXT DEFAULT ''")
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_analyses_content_hash ON analyses(content_hash)")
+
+    const userColumns = db.prepare("PRAGMA table_info(users)").all().map(col => col.name)
+    if (!userColumns.includes("is_guest")) {
+        db.exec("ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+const GUEST_RETENTION_HOURS = parseInt(process.env.GUEST_RETENTION_HOURS || "24", 10)
+
+// guests get a real DB row
+export function deleteExpiredGuests(db) {
+    const expired = db.prepare(
+        "SELECT id FROM users WHERE is_guest = 1 AND created_at < datetime('now', ?)"
+    ).all(`-${GUEST_RETENTION_HOURS} hours`)
+
+    for (const { id: userId } of expired) {
+        deleteGuestUser(db, userId)
+    }
+}
+
+// every DELETE below uses a subquery 
+function deleteGuestUser(db, userId) {
+    const del = db.transaction(() => {
+        db.prepare("DELETE FROM rewrite_decisions WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)").run(userId)
+        db.prepare("DELETE FROM annotations WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
+        db.prepare(
+            "DELETE FROM revision_snapshots WHERE resume_id IN (SELECT id FROM resumes WHERE user_id = ?) OR analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)"
+        ).run(userId, userId)
+        db.prepare("DELETE FROM generated_documents WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
+        db.prepare("DELETE FROM job_matches WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
+        db.prepare("DELETE FROM evaluation_feedback WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
+        db.prepare("DELETE FROM mentor_feedback WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR candidate_id = ? OR mentor_id = ?").run(userId, userId, userId)
+        db.prepare("DELETE FROM session_participants WHERE user_id = ?").run(userId)
+        db.prepare("DELETE FROM user_api_keys WHERE user_id = ?").run(userId)
+        db.prepare("DELETE FROM analysis_jobs WHERE user_id = ? OR resume_id IN (SELECT id FROM resumes WHERE user_id = ?)").run(userId, userId)
+        db.prepare("DELETE FROM job_descriptions WHERE user_id = ?").run(userId)
+        db.prepare("DELETE FROM analyses WHERE user_id = ?").run(userId)
+        db.prepare("DELETE FROM resumes WHERE user_id = ?").run(userId)
+        db.prepare("DELETE FROM users WHERE id = ?").run(userId)
+    })
+    del()
 }
 
 export function getDb() {

@@ -24,7 +24,7 @@ export function canAccessAnalysis(analysisId, user) {
     `).get(analysisId, user.id)
 }
 
-// mentor <-> candidate trust = session membership, only see candidates in your own sessions
+// mentor & candidate 
 export function mentorSessionForCandidate(mentorId, candidateId, { activeOnly = true } = {}) {
     return getDb().prepare(`
         SELECT rs.id, rs.session_code, rs.active

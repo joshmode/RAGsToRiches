@@ -1,7 +1,7 @@
 import crypto from "crypto"
 import { getDb } from "./db.js"
 
-// per-user keys, decrypted fresh per request from their own row - never a shared file/env var
+// per-user keys decrypted fresh per request from their own row
 const ALGO = "aes-256-gcm"
 
 const KEY_ENCRYPTION_SECRET = process.env.KEY_ENCRYPTION_SECRET ||
@@ -11,7 +11,7 @@ if (!KEY_ENCRYPTION_SECRET) {
     throw new Error("KEY_ENCRYPTION_SECRET is required in production to store user API keys.")
 }
 
-// hash down to 32 bytes for AES-256 regardless of secret length
+// hash down to 32b for sha 256
 const MASTER_KEY = crypto.createHash("sha256").update(KEY_ENCRYPTION_SECRET).digest()
 
 export const BYOK_PROVIDERS = new Set(["gemini", "claude", "chatgpt"])
@@ -71,10 +71,10 @@ class ProviderResolutionError extends Error {
     }
 }
 
-// turns a UI provider choice into what the engine needs, incl the user's own byok key
+// turns a UI provider choice into what the engine needs
 export function resolveProviderForRequest(userId, providerChoice) {
     if (providerChoice === "default") {
-        return { engineProvider: "openrouter", apiKey: "" } // pooled key, lives on the engine's own env
+        return { engineProvider: "openrouter", apiKey: "" } // pooled key
     }
     if (providerChoice === "local") {
         return { engineProvider: "local", apiKey: "" }

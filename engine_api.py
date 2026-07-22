@@ -33,7 +33,7 @@ import feedback
 
 app = Flask(__name__)
 
-# 25MB file limit plus base64/json overhead, reject oversized bodies before buffering
+# 25MB file limit
 app.config["MAX_CONTENT_LENGTH"] = 40 * 1024 * 1024
 
 
@@ -132,6 +132,7 @@ def gen_cv_endpoint():
     api_key = data.get("api_key", "")
     suggestions = data.get("rewrite_suggestions", None)
     decisions = data.get("rewrite_decisions", None)
+    mentor_overrides = data.get("mentor_overrides", None)
 
     cv_text = gen_cv(
         resume, jd, acc_map, provider, local_endpoint,
@@ -139,6 +140,7 @@ def gen_cv_endpoint():
         rewrite_decisions=decisions,
         model=model,
         api_key=api_key,
+        mentor_overrides=mentor_overrides,
     )
     return jsonify({"cv_text": cv_text})
 
@@ -233,8 +235,7 @@ def compare_endpoint():
 @app.route("/env-status", methods=["GET"])
 def env_status():
     # per-user byok keys live encrypted in the express db now, this is just the pooled secrets.
-    # groq is kept reported here even though "default" no longer resolves to it - the provider
-    # itself still works, just isn't wired up as the pooled tier anymore
+  
     _load_env()
     groq_key = os.environ.get("GROQ_API_KEY", "")
     openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")

@@ -1,11 +1,24 @@
 import { Router } from "express"
 import multer from "multer"
+import crypto from "crypto"
 import fetch from "node-fetch"
 import { getDb } from "../db.js"
 import { authenticateToken } from "../middleware/auth.js"
 import { canAccessAnalysis, getOwnedAnalysis, getOwnedResume } from "../access.js"
+import { pollLimiter } from "../middleware/rateLimit.js"
+import { fetchEngineWithRetry } from "../engineClient.js"
+import { resolveProviderForRequest, ProviderResolutionError } from "../userKeys.js"
 
 const router = Router()
+const ANALYSIS_CACHE_TTL_MINUTES = parseInt(process.env.ANALYSIS_CACHE_TTL_MINUTES || "60", 10)
+const PROVIDER_CHOICES = new Set(["default", "gemini", "claude", "chatgpt", "local"])
+
+// same resume+jd+provider+critic+endpoint = same result so cached
+function analysisContentHash({ resumeId, jobDescription, provider, model, useCritic, localEndpoint }) {
+    return crypto.createHash("sha256")
+        .update(`${resumeId}|${provider || ""}|${model || ""}|${useCritic ? "1" : "0"}|${localEndpoint || ""}|${jobDescription || ""}`)
+        .digest("hex")
+}
 const allowedExtensions = new Set([".pdf", ".docx", ".doc", ".odt", ".txt", ".md", ".zip"])
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -64,21 +77,37 @@ async function processAnalysis(engineUrl, jobId, payload) {
     const db = getDb()
     db.prepare("UPDATE analysis_jobs SET status = 'running', updated_at = datetime('now') WHERE id = ?").run(jobId)
     try {
-        const analyseRes = await fetch(`${engineUrl}/analyse`, {
+        // resolved fresh here, never stored - request_json only ever holds the provider choice
+        const { engineProvider, apiKey } = resolveProviderForRequest(payload.user_id, payload.provider)
+        const enginePayload = {
+            resume_json: payload.resume_json,
+            job_description: payload.job_description,
+            provider: engineProvider,
+            use_critic: payload.use_critic,
+            local_endpoint: payload.local_endpoint,
+            api_key: apiKey,
+        }
+
+        const analyseRes = await fetchEngineWithRetry(`${engineUrl}/analyse`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(enginePayload),
         })
         if (!analyseRes.ok) throw new Error((await analyseRes.json()).error || "Analysis failed.")
         const results = await analyseRes.json()
         results.parsed_resume = payload.resume_json
         results.job_description = payload.job_description || ""
         const scoreTotal = typeof results.score === "object" ? results.score.total || 0 : results.score || 0
+        const contentHash = analysisContentHash({
+            resumeId: payload.resume_id, jobDescription: payload.job_description,
+            provider: payload.provider, model: "", useCritic: payload.use_critic,
+            localEndpoint: payload.local_endpoint,
+        })
         const row = db.prepare(
-            "INSERT INTO analyses (resume_id, user_id, results_json, job_description, provider, model, score_total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+            "INSERT INTO analyses (resume_id, user_id, results_json, job_description, provider, model, score_total, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
         ).run(
             payload.resume_id, payload.user_id, JSON.stringify(results), payload.job_description || "",
-            payload.provider || "", payload.model || "", scoreTotal,
+            payload.provider || "", "", scoreTotal, contentHash,
         )
         results.analysis_id = row.lastInsertRowid
         results.resume_id = payload.resume_id
@@ -94,17 +123,42 @@ async function processAnalysis(engineUrl, jobId, payload) {
 }
 
 router.post("/run", authenticateToken, (req, res) => {
-    const { resume_json, job_description, provider, model, use_critic, local_endpoint, resume_id } = req.body
+    const { resume_json, job_description, provider, use_critic, local_endpoint, resume_id } = req.body
     const resumeId = parseInt(resume_id)
     if (!resumeId || !getOwnedResume(resumeId, req.user.id)) {
         return res.status(404).json({ error: "Resume not found." })
     }
+    if (!PROVIDER_CHOICES.has(provider)) {
+        return res.status(400).json({ error: "Unknown provider." })
+    }
     if (provider === "local" && process.env.ALLOW_LOCAL_PROVIDER !== "true") {
         return res.status(403).json({ error: "Local model endpoints are disabled for this deployment." })
     }
+    // fail fast if a BYOK provider has no key
+    try {
+        resolveProviderForRequest(req.user.id, provider)
+    } catch (err) {
+        if (err instanceof ProviderResolutionError) return res.status(err.status).json({ error: err.message })
+        throw err
+    }
 
-    const payload = { resume_id: resumeId, user_id: req.user.id, resume_json, job_description, provider, model, use_critic, local_endpoint }
+    // model is fixed per provider server-sid now never client-selected.
+    const payload = { resume_id: resumeId, user_id: req.user.id, resume_json, job_description, provider, use_critic, local_endpoint }
     const db = getDb()
+
+    if (ANALYSIS_CACHE_TTL_MINUTES > 0) {
+        const contentHash = analysisContentHash({ resumeId, jobDescription: job_description, provider, model: "", useCritic: use_critic, localEndpoint: local_endpoint })
+        const cached = db.prepare(
+            `SELECT id FROM analyses WHERE user_id = ? AND content_hash = ? AND content_hash != '' AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 1`
+        ).get(req.user.id, contentHash, `-${ANALYSIS_CACHE_TTL_MINUTES} minutes`)
+        if (cached) {
+            const cachedRow = db.prepare(
+                "INSERT INTO analysis_jobs (resume_id, user_id, request_json, status, analysis_id, created_at, updated_at) VALUES (?, ?, ?, 'completed', ?, datetime('now'), datetime('now'))"
+            ).run(resumeId, req.user.id, JSON.stringify(payload), cached.id)
+            return res.status(202).json({ job_id: cachedRow.lastInsertRowid, status: "queued" })
+        }
+    }
+
     const row = db.prepare(
         "INSERT INTO analysis_jobs (resume_id, user_id, request_json, status, created_at, updated_at) VALUES (?, ?, ?, 'queued', datetime('now'), datetime('now'))"
     ).run(resumeId, req.user.id, JSON.stringify(payload))
@@ -112,7 +166,7 @@ router.post("/run", authenticateToken, (req, res) => {
     res.status(202).json({ job_id: row.lastInsertRowid, status: "queued" })
 })
 
-router.get("/jobs/:jobId", authenticateToken, (req, res) => {
+router.get("/jobs/:jobId", pollLimiter, authenticateToken, (req, res) => {
     const db = getDb()
     const job = db.prepare("SELECT * FROM analysis_jobs WHERE id = ? AND user_id = ?").get(req.params.jobId, req.user.id)
     if (!job) return res.status(404).json({ error: "Analysis job not found." })
@@ -125,7 +179,7 @@ router.get("/jobs/:jobId", authenticateToken, (req, res) => {
     res.json({ id: job.id, status: job.status, error: job.error || "" })
 })
 
-router.post("/highlight", authenticateToken, async (req, res) => {
+router.post("/highlight", pollLimiter, authenticateToken, async (req, res) => {
     const engineUrl = req.app.locals.engineUrl
     try {
         const engineRes = await fetch(`${engineUrl}/highlight-pdf`, {
