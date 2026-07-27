@@ -11,6 +11,7 @@
   "dependencies": {
     "axios": "^1.7.9",
     "chart.js": "^4.4.7",
+    "diff": "^9.0.0",
     "lucide-react": "^1.25.0",
     "pdfjs-dist": "^4.9.155",
     "react": "^19.0.0",

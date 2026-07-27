@@ -1,33 +1,33 @@
-# Web Framework
+# web framework
 streamlit>=1.40.0
 altair
 pandas
 
-# PDF Parsing
+# pdf parsing
 PyMuPDF
 easyocr
 pdf2image
 Pillow
 numpy
 
-# Chromadb
+# chromadb
 chromadb>=0.6.0
 sentence-transformers>=3.0.0
 
-# LLM Providers
+# llm providers
 google-genai
 anthropic>=0.28.0
 openai
 requests
 
-# Environment Management
+# env management
 python-dotenv
 markdown-pdf
 python-docx
 odfpy
 gunicorn
 
-# Scraper, Database & Auth
+# scraper, db & auth
 beautifulsoup4
 lxml
 playwright

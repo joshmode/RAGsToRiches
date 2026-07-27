@@ -1,15 +1,15 @@
 import { getDb } from "./db.js"
 
-export function getOwnedResume(resumeId, userId) {
+export function getResume(resumeId, userId) {
     return getDb().prepare("SELECT * FROM resumes WHERE id = ? AND user_id = ?").get(resumeId, userId)
 }
 
-export function getOwnedAnalysis(analysisId, userId) {
+export function getAnalysis(analysisId, userId) {
     return getDb().prepare("SELECT * FROM analyses WHERE id = ? AND user_id = ?").get(analysisId, userId)
 }
 
-export function canAccessAnalysis(analysisId, user) {
-    const owned = getOwnedAnalysis(analysisId, user.id)
+export function canAccess(analysisId, user) {
+    const owned = getAnalysis(analysisId, user.id)
     if (owned) return owned
     if (user.role !== "mentor") return null
 
@@ -24,8 +24,8 @@ export function canAccessAnalysis(analysisId, user) {
     `).get(analysisId, user.id)
 }
 
-// mentor & candidate 
-export function mentorSessionForCandidate(mentorId, candidateId, { activeOnly = true } = {}) {
+// trust is session membership, only your own candidates
+export function mentorSession(mentorId, candidateId, { activeOnly = true } = {}) {
     return getDb().prepare(`
         SELECT rs.id, rs.session_code, rs.active
         FROM review_sessions rs
@@ -34,4 +34,14 @@ export function mentorSessionForCandidate(mentorId, candidateId, { activeOnly = 
         ORDER BY rs.active DESC, rs.created_at DESC
         LIMIT 1
     `).get(mentorId, candidateId)
+}
+
+// a candidate can sit in more than one mentor's session
+export function mentorsFor(candidateId) {
+    return getDb().prepare(`
+        SELECT DISTINCT rs.mentor_id
+        FROM review_sessions rs
+        JOIN session_participants sp ON sp.session_id = rs.id
+        WHERE sp.user_id = ? AND rs.active = 1
+    `).all(candidateId).map(r => r.mentor_id)
 }

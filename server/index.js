@@ -13,8 +13,9 @@ import annotationRoutes from "./routes/annotations.js"
 import scraperRoutes from "./routes/scraper.js"
 import settingsRoutes from "./routes/settings.js"
 import feedbackRoutes from "./routes/feedback.js"
+import notificationRoutes from "./routes/notifications.js"
 import { getDb } from "./db.js"
-import { generalLimiter, authLimiter, llmLimiter } from "./middleware/rateLimit.js"
+import { generalLimiter, authLimiter } from "./middleware/rateLimit.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -25,18 +26,23 @@ const app = express()
 const PORT = process.env.API_PORT || 3000
 const ENGINE_URL = process.env.ENGINE_URL || "http://localhost:5001"
 
+// express 4 won't route a rejected async handler to the error middleware, so one missed and hbangs everything
+process.on("unhandledRejection", (err) => {
+    console.error("Unhandled rejection:", err)
+})
+
 getDb()
 
-// needed for secure cookies behind a reverse proxy
+// correct client ips behind a reverse proxy
 app.set("trust proxy", 1)
 
 app.use(helmet({
-    contentSecurityPolicy: false, 
+    contentSecurityPolicy: false, // same-origin spa bundle, the default csp blocks it
 }))
 
 const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
     .split(",")
-    .map(origin => origin.trim())
+    .map(o => o.trim())
     .filter(Boolean)
 
 app.use(cors({
@@ -65,7 +71,6 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api", generalLimiter)
 app.use("/api/auth", authLimiter, authRoutes)
-app.use("/api/analysis/run", llmLimiter)
 app.use("/api/generate", generationRoutes)
 app.use("/api/analysis", analysisRoutes)
 app.use("/api/mentor", mentorRoutes)
@@ -73,8 +78,9 @@ app.use("/api/annotations", annotationRoutes)
 app.use("/api/scrape", scraperRoutes)
 app.use("/api/settings", settingsRoutes)
 app.use("/api/feedback", feedbackRoutes)
+app.use("/api/notifications", notificationRoutes)
 
-// unmatched /api/* routes stay JSON instead of falling through to the SPA catch-all
+// unmatched /api/* stays json, don't fall through to the spa
 app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found." })
 })
@@ -85,7 +91,7 @@ app.get("*", (_req, res) => {
     res.sendFile(path.join(clientDist, "index.html"))
 })
 
-// final safety net so an uncaught error still responds 
+// last resort, still json not a crash
 app.use((err, _req, res, _next) => {
     if (err?.message === "Not allowed by CORS") {
         return res.status(403).json({ error: "This origin is not permitted to access the API." })

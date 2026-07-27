@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken"
 import dotenv from "dotenv"
 import path from "path"
 import { fileURLToPath } from "url"
+import { getDb } from "../db.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -14,7 +15,7 @@ if (!JWT_SECRET) {
     throw new Error("JWT_SECRET is required in production.")
 }
 
-export function authenticateToken(req, res, next) {
+export function requireAuth(req, res, next) {
     const header = req.headers.authorization
     if (!header || !header.startsWith("Bearer ")) {
         return res.status(401).json({ error: "Authentication required" })
@@ -23,6 +24,10 @@ export function authenticateToken(req, res, next) {
     const token = header.split(" ")[1]
     try {
         const decoded = jwt.verify(token, JWT_SECRET)
+        // guests are purged well before their 7-day token expires 
+        if (decoded.is_guest && !getDb().prepare("SELECT 1 FROM users WHERE id = ?").get(decoded.id)) {
+            return res.status(401).json({ error: "Invalid or expired token" })
+        }
         req.user = decoded
         next()
     } catch {

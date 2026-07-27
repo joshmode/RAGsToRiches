@@ -15,7 +15,8 @@ def _ocr_installed() -> bool:
         and importlib.util.find_spec("numpy") is not None
     )
 
-# easyocr Reader only initialised once 
+
+# easyocr Reader is expensive to initialise so dont unless needded
 _reader = None
 
 def _get_reader():
@@ -266,7 +267,6 @@ def _match_section(line: str) -> str | None:
         if m:
             return SECTION_ALIASES[m.group(1).lower()]
 
-    # Direct lowercase lookup
     lower = cleaned.lower().strip()
     if lower in SECTION_ALIASES:
         return SECTION_ALIASES[lower]
@@ -276,7 +276,7 @@ def _match_section(line: str) -> str | None:
     if stripped in SECTION_ALIASES:
         return SECTION_ALIASES[stripped]
 
-    # cleanse colon that may be embedded
+    # cleanse colon that may be inside
     colon_stripped = re.sub(r'\s*:\s*.*$', '', lower).strip()
     if colon_stripped in SECTION_ALIASES:
         return SECTION_ALIASES[colon_stripped]
@@ -381,7 +381,6 @@ def _parse_contact(lines: list[str]) -> dict:
 
     return contact
 
-
 def _lines_to_resume(all_lines: list[str], result: ParsedResume | None = None) -> ParsedResume:
     if result is None:
         result = ParsedResume()
@@ -418,10 +417,10 @@ def _lines_to_resume(all_lines: list[str], result: ParsedResume | None = None) -
             # canonical == current 
             sections[current].append(line)
 
-    contact_vals = set(result.contact.values())
+    vals = set(result.contact.values())
     sections["HEADER"] = [
         l for l in sections.get("HEADER", [])
-        if l not in contact_vals
+        if l not in vals
         and not EMAIL_RE.search(l)
         and not PHONE_RE.search(l)
         and not LINKEDIN_RE.search(l)
@@ -448,9 +447,11 @@ def parse_pdf(pdf_file) -> ParsedResume:
         return result
 
     all_lines: list[str] = []
-    for page in doc:
-        all_lines.extend(_sorted_blocks(page))
-    doc.close()
+    try:
+        for page in doc:
+            all_lines.extend(_sorted_blocks(page))
+    finally:
+        doc.close()
 
     if _is_scan(all_lines):
         if not _ocr_installed():
@@ -478,22 +479,27 @@ def parse_docx(docx_file) -> ParsedResume:
 
     raw = docx_file.read() if hasattr(docx_file, "read") else docx_file
     import io
-    doc = Document(io.BytesIO(raw) if isinstance(raw, bytes) else raw)
+    try:
+        doc = Document(io.BytesIO(raw) if isinstance(raw, bytes) else raw)
 
-    all_lines: list[str] = []
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if text:
-            all_lines.append(text)
+        all_lines: list[str] = []
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if text:
+                all_lines.append(text)
 
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                text = cell.text.strip()
-                if text:
-                    all_lines.append(text)
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    text = cell.text.strip()
+                    if text:
+                        all_lines.append(text)
 
-    return _lines_to_resume(all_lines)
+        return _lines_to_resume(all_lines)
+    except Exception as e:
+        result = ParsedResume()
+        result.warnings.append(f"couldn't open DOCX: {e}")
+        return result
 
 
 def parse_text(txt_file) -> ParsedResume:
@@ -559,23 +565,23 @@ def parse_linkedin_export(export_file) -> ParsedResume:
     raw = export_file.read() if hasattr(export_file, "read") else export_file
     result = ParsedResume()
     try:
-        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-            entries = [entry for entry in archive.infolist() if not entry.is_dir()]
-            if len(entries) > 100 or sum(entry.file_size for entry in entries) > 25 * 1024 * 1024:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            entries = [e for e in zf.infolist() if not e.is_dir()]
+            if len(entries) > 100 or sum(e.file_size for e in entries) > 25 * 1024 * 1024:
                 result.warnings.append("LinkedIn export is too large to process.")
                 return result
 
             files = {
-                entry.filename.rsplit("/", 1)[-1].lower(): entry
-                for entry in entries
-                if entry.filename.lower().endswith(".csv")
+                e.filename.rsplit("/", 1)[-1].lower(): e
+                for e in entries
+                if e.filename.lower().endswith(".csv")
             }
 
             def rows(name: str) -> list[dict]:
-                entry = files.get(name)
-                if not entry:
+                e = files.get(name)
+                if not e:
                     return []
-                text = archive.read(entry).decode("utf-8-sig", errors="replace")
+                text = zf.read(e).decode("utf-8-sig", errors="replace")
                 return list(csv.DictReader(io.StringIO(text)))
 
             profile = rows("profile.csv")
@@ -595,14 +601,14 @@ def parse_linkedin_export(export_file) -> ParsedResume:
                 for item in positions:
                     title = item.get("Title", "").strip()
                     company = item.get("Company Name", "").strip()
-                    started = item.get("Started On", "").strip()
-                    finished = item.get("Finished On", "").strip()
-                    heading = " | ".join(part for part in [title, company, " - ".join(part for part in [started, finished] if part)] if part)
-                    if heading:
-                        lines.append(heading)
-                    description = item.get("Description", "").strip()
-                    if description:
-                        lines.extend(line.strip() for line in description.splitlines() if line.strip())
+                    start = item.get("Started On", "").strip()
+                    end = item.get("Finished On", "").strip()
+                    head = " | ".join(part for part in [title, company, " - ".join(part for part in [start, end] if part)] if part)
+                    if head:
+                        lines.append(head)
+                    desc = item.get("Description", "").strip()
+                    if desc:
+                        lines.extend(line.strip() for line in desc.splitlines() if line.strip())
                 if lines:
                     sections["EXPERIENCE"] = lines
 
@@ -656,9 +662,9 @@ _FORMAT_PARSERS = {
 def parse_file(file_data, filename: str = "") -> ParsedResume:
     import os as _os
     ext = _os.path.splitext(filename)[1].lower() if filename else ".pdf"
-    parser_fn = _FORMAT_PARSERS.get(ext)
-    if parser_fn is None:
+    fn = _FORMAT_PARSERS.get(ext)
+    if fn is None:
         result = ParsedResume()
         result.warnings.append(f"Unsupported resume format: {ext or 'unknown'}.")
         return result
-    return parser_fn(file_data)
+    return fn(file_data)

@@ -109,6 +109,7 @@ function initDb(db) {
             user_id INTEGER NOT NULL,
             document_type TEXT NOT NULL,
             content TEXT NOT NULL,
+            company TEXT DEFAULT '',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (analysis_id) REFERENCES analyses(id),
             FOREIGN KEY (user_id) REFERENCES users(id)
@@ -128,6 +129,7 @@ function initDb(db) {
             job_description_id INTEGER,
             analysis_id INTEGER,
             result_json TEXT NOT NULL,
+            content_hash TEXT DEFAULT '',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id),
             FOREIGN KEY (job_description_id) REFERENCES job_descriptions(id),
@@ -180,34 +182,92 @@ function initDb(db) {
         );
     `)
 
-
-    const columns = db.prepare("PRAGMA table_info(analyses)").all().map(col => col.name)
-    if (!columns.includes("content_hash")) {
+    // CREATE TABLE is a no-op on an existing analyses table
+    let cols = db.prepare("PRAGMA table_info(analyses)").all().map(c => c.name)
+    if (!cols.includes("content_hash")) {
         db.exec("ALTER TABLE analyses ADD COLUMN content_hash TEXT DEFAULT ''")
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_analyses_content_hash ON analyses(content_hash)")
 
-    const userColumns = db.prepare("PRAGMA table_info(users)").all().map(col => col.name)
-    if (!userColumns.includes("is_guest")) {
+    cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name)
+    if (!cols.includes("is_guest")) {
         db.exec("ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0")
     }
+
+    cols = db.prepare("PRAGMA table_info(generated_documents)").all().map(c => c.name)
+    if (!cols.includes("company")) {
+        db.exec("ALTER TABLE generated_documents ADD COLUMN company TEXT DEFAULT ''")
+    }
+
+    cols = db.prepare("PRAGMA table_info(job_matches)").all().map(c => c.name)
+    if (!cols.includes("content_hash")) {
+        db.exec("ALTER TABLE job_matches ADD COLUMN content_hash TEXT DEFAULT ''")
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_job_matches_content_hash ON job_matches(content_hash)")
+
+    // discussion threads reuse the annotations table
+    cols = db.prepare("PRAGMA table_info(annotations)").all().map(c => c.name)
+    if (!cols.includes("section")) {
+        db.exec("ALTER TABLE annotations ADD COLUMN section TEXT DEFAULT ''")
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_annotations_analysis_suggestion ON annotations(analysis_id, suggestion_key)")
+
+    // cover_letter_only skips the whole pipeline but still needs a row for history
+    cols = db.prepare("PRAGMA table_info(analyses)").all().map(c => c.name)
+    if (!cols.includes("attempt_type")) {
+        db.exec("ALTER TABLE analyses ADD COLUMN attempt_type TEXT NOT NULL DEFAULT 'resume_analysis'")
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_analyses_attempt_type ON analyses(user_id, attempt_type)")
+
+    // one row per unread event. attempt_type is sosummary can group without a join
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            analysis_id INTEGER,
+            attempt_type TEXT NOT NULL DEFAULT 'resume_analysis',
+            event_type TEXT NOT NULL,
+            read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (analysis_id) REFERENCES analyses(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read);
+        CREATE INDEX IF NOT EXISTS idx_notifications_analysis ON notifications(analysis_id);
+    `)
+
+    // doc versioning (see documents.js) extends generated_documents
+    cols = db.prepare("PRAGMA table_info(generated_documents)").all().map(c => c.name)
+    if (!cols.includes("source")) {
+        db.exec("ALTER TABLE generated_documents ADD COLUMN source TEXT NOT NULL DEFAULT 'ai'")
+    }
+    if (!cols.includes("author_id")) {
+        db.exec("ALTER TABLE generated_documents ADD COLUMN author_id INTEGER")
+    }
+    if (!cols.includes("mentor_feedback_id")) {
+        db.exec("ALTER TABLE generated_documents ADD COLUMN mentor_feedback_id INTEGER")
+    }
+    if (!cols.includes("comment")) {
+        db.exec("ALTER TABLE generated_documents ADD COLUMN comment TEXT DEFAULT ''")
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_generated_documents_version ON generated_documents(analysis_id, document_type, created_at)")
 }
 
 const GUEST_RETENTION_HOURS = parseInt(process.env.GUEST_RETENTION_HOURS || "24", 10)
 
-// guests get a real DB row
-export function deleteExpiredGuests(db) {
+// guests get a real row so everything else works
+export function sweepGuests(db) {
     const expired = db.prepare(
         "SELECT id FROM users WHERE is_guest = 1 AND created_at < datetime('now', ?)"
     ).all(`-${GUEST_RETENTION_HOURS} hours`)
 
     for (const { id: userId } of expired) {
-        deleteGuestUser(db, userId)
+        deleteGuest(db, userId)
     }
 }
 
-// every DELETE below uses a subquery 
-function deleteGuestUser(db, userId) {
+// children before parents. subqueries not a precomputed id list
+function deleteGuest(db, userId) {
     const del = db.transaction(() => {
         db.prepare("DELETE FROM rewrite_decisions WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)").run(userId)
         db.prepare("DELETE FROM annotations WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
@@ -218,6 +278,7 @@ function deleteGuestUser(db, userId) {
         db.prepare("DELETE FROM job_matches WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
         db.prepare("DELETE FROM evaluation_feedback WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
         db.prepare("DELETE FROM mentor_feedback WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR candidate_id = ? OR mentor_id = ?").run(userId, userId, userId)
+        db.prepare("DELETE FROM notifications WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
         db.prepare("DELETE FROM session_participants WHERE user_id = ?").run(userId)
         db.prepare("DELETE FROM user_api_keys WHERE user_id = ?").run(userId)
         db.prepare("DELETE FROM analysis_jobs WHERE user_id = ? OR resume_id IN (SELECT id FROM resumes WHERE user_id = ?)").run(userId, userId)

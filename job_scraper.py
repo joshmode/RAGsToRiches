@@ -94,7 +94,11 @@ def _element_to_text(el) -> str:
     """walk an element into structured text: bullets, headers, paragraphs - not flat line soup"""
     parts: list[str] = []
 
+<<<<<<< HEAD
     def is_header_text(text: str) -> bool:
+=======
+    def _is_header(text: str) -> bool:
+>>>>>>> 23b0253 (Add mentor session-join flow, BYOK key storage, HTTPS deploy config)
         words = text.split()
         if len(words) > 8 or re.search(r'[.!?]\s*$', text):
             return False
@@ -105,7 +109,12 @@ def _element_to_text(el) -> str:
     def walk(node):
         name = getattr(node, "name", None)
         if name is None:
+<<<<<<< HEAD
        
+=======
+            # loose text inside a container that also has a <ul>/<h*> sibling. that container
+            # recurses below instead of hitting the leaf branch, so grab it here or it's lost
+>>>>>>> 23b0253 (Add mentor session-join flow, BYOK key storage, HTTPS deploy config)
             text = " ".join(str(node).split())
             if text:
                 parts.append(text)
@@ -130,7 +139,11 @@ def _element_to_text(el) -> str:
             if not children or all(getattr(c, "name", None) in ("br", "strong", "b", "span") for c in children):
                 text = " ".join(node.get_text(" ", strip=True).split())
                 if text:
+<<<<<<< HEAD
                     if is_header_text(text):
+=======
+                    if _is_header(text):
+>>>>>>> 23b0253 (Add mentor session-join flow, BYOK key storage, HTTPS deploy config)
                         parts.append("")
                         parts.append(text.rstrip(":").upper() if len(text) < 60 else text)
                         parts.append("")
@@ -243,7 +256,11 @@ def scrape_linkedin_profile(url: str) -> dict:
     if "linkedin.com/in/" not in url.lower():
         return {"error": "That doesn't look like a LinkedIn profile URL (expected linkedin.com/in/...)."}
 
+<<<<<<< HEAD
     # plain request first - linkedin serves crawler-visible og: meta tags for public profiles
+=======
+    # plain request first 
+>>>>>>> 23b0253 (Add mentor session-join flow, BYOK key storage, HTTPS deploy config)
     html_text = ""
     try:
         resp = _safe_get(url, headers=_HEADERS, timeout=15)
@@ -275,7 +292,11 @@ def scrape_linkedin_profile(url: str) -> dict:
         except Exception:
             pass
 
+<<<<<<< HEAD
     # linkedin often includes og: tags even behind the authwall, use them if present
+=======
+    # linkedin often includes og: tags even behind the authwall use them if present
+>>>>>>> 23b0253 (Add mentor session-join flow, BYOK key storage, HTTPS deploy config)
     if html_text:
         meta = _profile_from_meta(html_text)
         if meta:
@@ -332,7 +353,8 @@ def compare_resume_jd(resume_text: str, jd_text: str, provider: str, local_endpo
     sys_prompt = (
         "You are a resume-to-job-description matching expert. "
         "Compare the candidate's resume against the job description. "
-        "Return ONLY valid JSON with this structure:\n"
+        "Return ONLY valid JSON with this structure, no explanation, no reasoning, no "
+        "preamble, nothing before or after the JSON:\n"
         '{"match_pct": 72, "missing_skills": ["skill1", "skill2"], '
         '"strong_matches": ["skill1", "skill2"], '
         '"tailoring_tips": ["tip1", "tip2"], '
@@ -347,9 +369,16 @@ def compare_resume_jd(resume_text: str, jd_text: str, provider: str, local_endpo
 
     try:
         from analyser import _parse_json
+<<<<<<< HEAD
         raw = llm_call(user_prompt=usr_prompt, system_prompt=sys_prompt,
                        provider=provider, local_endpoint=local_endpoint,
                        model=model, max_tokens=1024, api_key=api_key)
+=======
+        # generous budget, same reason as extract_jd_kws
+        raw = llm_call(user_prompt=usr_prompt, system_prompt=sys_prompt,
+                       provider=provider, local_endpoint=local_endpoint,
+                       model=model, max_tokens=4096, api_key=api_key)
+>>>>>>> 23b0253 (Add mentor session-join flow, BYOK key storage, HTTPS deploy config)
         return _parse_json(raw)
     except Exception as e:
         return {"match_pct": 0, "missing_skills": [], "strong_matches": [],

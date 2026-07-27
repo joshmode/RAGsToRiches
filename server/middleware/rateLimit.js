@@ -1,16 +1,16 @@
 import rateLimit from "express-rate-limit"
 
-// reports retry_after both 
+// reports retry_after both
 function rateLimitHandler(message) {
     return (req, res) => {
-        const resetMs = req.rateLimit?.resetTime ? req.rateLimit.resetTime.getTime() - Date.now() : 30000
-        const retryAfterSec = Math.max(1, Math.ceil(resetMs / 1000))
-        res.setHeader("Retry-After", String(retryAfterSec))
-        res.status(429).json({ error: message, retry_after: retryAfterSec })
+        const ms = req.rateLimit?.resetTime ? req.rateLimit.resetTime.getTime() - Date.now() : 30000
+        const sec = Math.max(1, Math.ceil(ms / 1000))
+        res.setHeader("Retry-After", String(sec))
+        res.status(429).json({ error: message, retry_after: sec })
     }
 }
 
-// stops abuse
+// floor against abuse
 export const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 600,
@@ -19,16 +19,17 @@ export const generalLimiter = rateLimit({
     handler: rateLimitHandler("Too many requests. Please slow down and try again shortly."),
 })
 
-// polling/highlighting fire constantly and shouldn't eat the general budget
+// polling/highlighting fire constantly
 export const pollLimiter = rateLimit({
     windowMs: 60 * 1000,
     limit: 90,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req) => req.user?.id ? `user:${req.user.id}` : req.ip,
     handler: rateLimitHandler("Refreshing too frequently. Please wait a moment."),
 })
 
-// login/register vulnerable 
+// login/register are brute-force targets for cyber attack
 export const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 20,
@@ -47,11 +48,12 @@ export const guestLimiter = rateLimit({
     handler: rateLimitHandler("Too many guest sessions started from this connection. Please wait a while, or create an account instead."),
 })
 
-// analysis/generation burns API budget
+// burns api budget not just cpu
 export const llmLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 30,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req) => req.user?.id ? `user:${req.user.id}` : req.ip,
     handler: rateLimitHandler("Too many analysis requests. Please wait a few minutes before trying again."),
 })

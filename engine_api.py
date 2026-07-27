@@ -1,6 +1,5 @@
 import logging
 import os
-import json
 import base64
 import io
 from flask import Flask, request, jsonify, send_file
@@ -38,12 +37,12 @@ app.config["MAX_CONTENT_LENGTH"] = 40 * 1024 * 1024
 
 
 @app.errorhandler(HTTPException)
-def _handle_http_exception(e: HTTPException):
+def _http_err(e: HTTPException):
     return jsonify({"error": e.description or e.name}), e.code
 
 
 @app.errorhandler(Exception)
-def _handle_unexpected_exception(e: Exception):
+def _unhandled_err(e: Exception):
     app.logger.exception("unhandled engine error")
     return jsonify({"error": "Internal server error. Please try again."}), 500
 
@@ -133,6 +132,7 @@ def gen_cv_endpoint():
     suggestions = data.get("rewrite_suggestions", None)
     decisions = data.get("rewrite_decisions", None)
     mentor_overrides = data.get("mentor_overrides", None)
+    section_overrides = data.get("section_overrides", None)
 
     cv_text = gen_cv(
         resume, jd, acc_map, provider, local_endpoint,
@@ -141,6 +141,7 @@ def gen_cv_endpoint():
         model=model,
         api_key=api_key,
         mentor_overrides=mentor_overrides,
+        section_overrides=section_overrides,
     )
     return jsonify({"cv_text": cv_text})
 

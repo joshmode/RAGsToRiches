@@ -1,12 +1,12 @@
 import { createContext, useContext, useState, useEffect } from "react"
 import api from "../api/client"
-import { getStoredUserRaw, setSession, clearSession } from "../api/session"
+import { getUserRaw, setSession, clearSession } from "../api/session"
 
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(() => {
-        const stored = getStoredUserRaw()
+        const stored = getUserRaw()
         if (!stored) return null
         try {
             return JSON.parse(stored)
@@ -32,7 +32,7 @@ export function AuthProvider({ children }) {
         return res.data.user
     }
 
-
+    // sessionStorage only, no way back once the tab closes
     async function continueAsGuest() {
         const res = await api.post("/auth/guest")
         setSession(res.data.token, res.data.user, false)

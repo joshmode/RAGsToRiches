@@ -1,11 +1,34 @@
+# Environment & Secrets
 .env
-node_modules/
-client/node_modules/
-server/node_modules/
-client/dist/
+.env.local
+
+# Python
+.venv/
+venv/
+env/
 __pycache__/
 *.pyc
-data/*.db
-data/*.json
-chroma_db/
+*.pyo
+*.pyd
+
+# Node.js
+node_modules/
+**/node_modules/
+
+# Frontend Build
+dist/
 client/dist/
+
+# Persistent Storage & Databases
+data/
+chroma_db/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# OS-generated files
+.DS_Store
+Thumbs.db

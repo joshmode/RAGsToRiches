@@ -32,16 +32,14 @@ api.interceptors.response.use(
             return Promise.reject(err)
         }
 
-
         if (err.response?.status === 429) {
             const config = err.config || {}
-            const attempt = config.__retryCount || 0
-            if (attempt < MAX_429_RETRIES) {
-                config.__retryCount = attempt + 1
-                const retryAfterSec = Number(err.response.data?.retry_after) || 0
-                const backoffMs = Math.min(MAX_RETRY_DELAY_MS, BASE_RETRY_DELAY_MS * 2 ** attempt)
-                const jitterMs = Math.random() * 400
-                await sleep((retryAfterSec > 0 ? retryAfterSec * 1000 : backoffMs) + jitterMs)
+            const n = config.__retryCount || 0
+            if (n < MAX_429_RETRIES) {
+                config.__retryCount = n + 1
+                const sec = Number(err.response.data?.retry_after) || 0
+                const backoff = Math.min(MAX_RETRY_DELAY_MS, BASE_RETRY_DELAY_MS * 2 ** n)
+                await sleep((sec > 0 ? sec * 1000 : backoff) + Math.random() * 400)
                 return api(config)
             }
         }

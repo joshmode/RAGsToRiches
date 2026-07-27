@@ -1,24 +1,23 @@
 import { Router } from "express"
 import fetch from "node-fetch"
-import { authenticateToken } from "../middleware/auth.js"
-import { BYOK_PROVIDERS, saveUserApiKey, deleteUserApiKey, hasUserApiKey } from "../userKeys.js"
+import { requireAuth } from "../middleware/auth.js"
+import { BYOK_PROVIDERS, saveKey, deleteKey, hasKey } from "../userKeys.js"
 
 const router = Router()
 
-
-router.get("/env-status", authenticateToken, async (req, res) => {
+// their own byok keys plus the globals
+router.get("/env-status", requireAuth, async (req, res) => {
     const status = {}
     for (const provider of BYOK_PROVIDERS) {
-        status[provider] = hasUserApiKey(req.user.id, provider)
+        status[provider] = hasKey(req.user.id, provider)
     }
     status.localAllowed = process.env.ALLOW_LOCAL_PROVIDER === "true"
 
     const engineUrl = req.app.locals.engineUrl
     try {
-        const engineRes = await fetch(`${engineUrl}/env-status`)
-        const engineStatus = await engineRes.json()
-        status.default = !!engineStatus.openrouter
-        status.linkedin = !!engineStatus.linkedin
+        const engine = await (await fetch(`${engineUrl}/env-status`)).json()
+        status.default = !!engine.openrouter
+        status.linkedin = !!engine.linkedin
     } catch {
         status.default = false
         status.linkedin = false
@@ -26,7 +25,7 @@ router.get("/env-status", authenticateToken, async (req, res) => {
     res.json(status)
 })
 
-router.post("/api-key", authenticateToken, (req, res) => {
+router.post("/api-key", requireAuth, (req, res) => {
     const provider = String(req.body.provider || "")
     const key = String(req.body.key || "").trim()
 
@@ -41,33 +40,32 @@ router.post("/api-key", authenticateToken, (req, res) => {
     }
 
     try {
-        saveUserApiKey(req.user.id, provider, key)
+        saveKey(req.user.id, provider, key)
         res.json({ ok: true })
     } catch (err) {
-        res.status(500).json({ error: `Failed to save key: ${err.message}` })
+        res.status(500).json({ error: "Failed to save key. Please try again." })
     }
 })
 
-router.delete("/api-key/:provider", authenticateToken, (req, res) => {
+router.delete("/api-key/:provider", requireAuth, (req, res) => {
     if (!BYOK_PROVIDERS.has(req.params.provider)) {
         return res.status(400).json({ error: "Unknown provider." })
     }
-    deleteUserApiKey(req.user.id, req.params.provider)
+    deleteKey(req.user.id, req.params.provider)
     res.json({ ok: true })
 })
 
 router.get("/feedback-status", async (req, res) => {
     const engineUrl = req.app.locals.engineUrl
     try {
-        const engineRes = await fetch(`${engineUrl}/feedback-status`)
-        const data = await engineRes.json()
-        res.json(data)
+        res.json(await (await fetch(`${engineUrl}/feedback-status`)).json())
     } catch (err) {
         res.json({ silenced: false })
     }
 })
 
-router.post("/silence-feedback", async (req, res) => {
+// writes global engine state unlike the GETs above so it needs auth
+router.post("/silence-feedback", requireAuth, async (req, res) => {
     const engineUrl = req.app.locals.engineUrl
     try {
         await fetch(`${engineUrl}/silence-feedback`, { method: "POST" })
@@ -80,9 +78,7 @@ router.post("/silence-feedback", async (req, res) => {
 router.get("/forms-url", async (req, res) => {
     const engineUrl = req.app.locals.engineUrl
     try {
-        const engineRes = await fetch(`${engineUrl}/forms-url`)
-        const data = await engineRes.json()
-        res.json(data)
+        res.json(await (await fetch(`${engineUrl}/forms-url`)).json())
     } catch {
         res.json({ url: "https://forms.gle/YOUR_FORM_ID_HERE" })
     }
