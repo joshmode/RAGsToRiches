@@ -15,16 +15,14 @@ export async function fetchEngineWithRetry(url, options, attempt = 0) {
     if (res.status === 429 && attempt < MAX_RETRIES) {
         let retryAfterSec = 0
         try {
-            const body = await res.clone().json()
-            retryAfterSec = Number(body.retry_after) || 0
+            retryAfterSec = Number((await res.clone().json()).retry_after) || 0
         } catch {
-            // engine didn't return a JSON body
+            // no json body to read retry_after out of
         }
-        const backoffMs = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** attempt)
-        const jitterMs = Math.random() * 500
-        const delayMs = retryAfterSec > 0 ? retryAfterSec * 1000 + jitterMs : backoffMs + jitterMs
-        await sleep(delayMs)
-        return fetchEngineWithRetry(url, options, attempt + 1)
+        const backoff = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** attempt)
+        const jitter = Math.random() * 500
+        await sleep(retryAfterSec > 0 ? retryAfterSec * 1000 + jitter : backoff + jitter)
+        return fetchEngine(url, options, attempt + 1)
     }
 
     return res

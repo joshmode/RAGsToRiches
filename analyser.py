@@ -40,9 +40,14 @@ def kw_freqs(jd_keywords: list[str], resume_text: str) -> dict[str, int]:
     return freqs
 
 
+_THINK_BLOCK_RE = re.compile(r'<think(?:ing)?\b[^>]*>.*?</think(?:ing)?>', re.IGNORECASE | re.DOTALL)
+
+
 def _parse_json(raw: str) -> Any:
-    """extract json from llm output, stripping markdown fences and filler."""
-    cleaned = raw.strip()
+    """extract json from llm output, stripping reasoning traces, markdown fences and filler."""
+    # reasoning models still emit a <think>...</think> block sometimes even when told not to,
+    # strip it so the parse below doesn't mistake it for the answer
+    cleaned = _THINK_BLOCK_RE.sub('', raw).strip()
 
     if cleaned.startswith("```"):
         lines = cleaned.splitlines()
@@ -74,14 +79,19 @@ def extract_jd_kws(job_desc: str, provider: str, local_endpoint: str, model: str
     prompt = (
         "Extract every technical skill, tool, framework, methodology, certification, "
         "and domain-specific keyword from this job description. "
-        "Return ONLY a JSON array of short strings — no explanation, no markdown fences. "
+        "Return ONLY a JSON array of short strings — no explanation, no reasoning, no "
+        "preamble, no markdown fences, nothing before or after the array. "
         'Example output: ["Python", "Docker", "CI/CD", "REST API", "agile"]\n\n'
         f"Job description:\n{job_desc}"
     )
 
+    # generous budget bc free-tier models can burn most of their output on reasoning
     raw = llm_call(user_prompt=prompt, provider=provider, local_endpoint=local_endpoint,
-                   model=model, max_tokens=1024, api_key=api_key)
-    return _parse_json(raw)
+                   model=model, max_tokens=4096, api_key=api_key)
+    parsed = _parse_json(raw)
+    if not isinstance(parsed, list):
+        raise ValueError(f"expected a JSON array of keywords, got {type(parsed).__name__}")
+    return [str(kw).strip() for kw in parsed if isinstance(kw, (str, int, float)) and str(kw).strip()]
 
 
 _QUANT_RE = re.compile(r'(?<!\w)(?:\$?\d+(?:\.\d+)?(?:[%xX])?|\d+(?:\.\d+)?\s*(?:users?|people|clients?|customers?|hours?|days?|weeks?|months?|years?))(?!\w)', re.IGNORECASE)
@@ -160,11 +170,13 @@ def _run_critic(
                 model=model, max_tokens=1024, timeout=30, max_retries=1, api_key=api_key,
             )
             try:
-                result = _parse_json(retry_raw)
+                parsed_retry = _parse_json(retry_raw)
+                if isinstance(parsed_retry, dict):
+                    result = parsed_retry
             except Exception:
                 pass
 
-            sev = result.get("severity", "yellow").lower()
+            sev = str(result.get("severity", "yellow")).lower()
             if sev not in ("red", "yellow", "green"):
                 sev = "yellow"
             result["severity"] = sev
@@ -340,6 +352,7 @@ def rewrite_chunk(
                 text, results[i].get("rewritten", text), results[i],
                 usr_prompt_single, sys_prompt, provider, local_endpoint, model, api_key=api_key,
             )
+            results[i]["original"] = text
 
     return results
 
@@ -631,7 +644,7 @@ def analyse(
         for i, unit in enumerate(_build_units(sec, lines)):
             jobs.append((sec, i, unit))
 
-    # every other detected section
+    # everything else the parser found. this was a fixed whitelist once and it kept drifting out
     for sec, lines in resume.sections.items():
         if sec == "HEADER" or sec in primary or not lines:
             continue
@@ -755,7 +768,8 @@ def analyse(
         "score":               score,
         "warnings":            resume.warnings,
         "ocr_used":            resume.ocr_used,
-        "no_jd_provided":      len(jd_kws) == 0,
+        # "no jd" and "extraction failed" have to stay distinct
+        "no_jd_provided":      not job_description.strip(),
         "timing": {
             "keywords_ms":   int(t_kw * 1000),
             "retrieval_ms":  int(t_retrieval * 1000),
@@ -772,8 +786,12 @@ def _apply_rewrites(
     acc_map: dict,
     suggestions: dict[str, list[dict]] | None,
     decisions: dict[str, bool] | None,
+    mentor_overrides: dict[str, str] | None = None,
 ) -> tuple[list[str], list[dict], list[dict]]:
-    if not suggestions or not decisions:
+    mentor_overrides = mentor_overrides or {}
+    decisions = decisions or {}
+    # a mentor's edit can be accepted without ever going through the suggestions flow
+    if not suggestions or (not decisions and not mentor_overrides):
         return [acc_map.get(line, line) for line in lines], [], []
 
     by_first = {
@@ -794,7 +812,13 @@ def _apply_rewrites(
 
         item = by_first.get(idx)
         decision = decisions.get(item.get("id")) if item else None
-        if item and decision is True:
+        # an accepted mentor rewrite wins whatever was done with the llm's own suggestion
+        override = mentor_overrides.get(item.get("id")) if item else None
+        if item and override:
+            out.append(override)
+            accepted.append(item)
+            skip_until = max(item.get("line_indices", [idx]))
+        elif item and decision is True:
             out.append(item.get("rewritten", item.get("original", line)))
             accepted.append(item)
             skip_until = max(item.get("line_indices", [idx]))
@@ -818,9 +842,21 @@ def gen_cv(
     rewrite_decisions: dict[str, bool] | None = None,
     model: str = "",
     api_key: str = "",
+    mentor_overrides: dict[str, str] | None = None,
+    section_overrides: dict[str, str] | None = None,
 ) -> str:
-    """generate a tailored CV from resume data and accepted rewrites."""
+    """generate a tailored CV from resume data and accepted rewrites.
+
+    mentor_overrides maps a rewrite suggestion's id to text a mentor suggested and the
+    candidate has already accepted - that wins over the LLM's own rewrite for that bullet.
+
+    section_overrides maps a SECTION NAME to a mentor-rewritten replacement for the whole
+    section, once the candidate has accepted that mentor Section Edit. It takes precedence
+    over every bullet-level mechanism above (rewrite_decisions, mentor_overrides) for that
+    section - the mentor's rewritten section becomes that section's sole source of truth,
+    and per-bullet AI rewrites for it are never applied again."""
     has_jd = bool(job_description.strip())
+    section_overrides = section_overrides or {}
 
     # build resume text with only accepted rewrites
     cv_text = ""
@@ -833,15 +869,22 @@ def gen_cv(
             cv_text += f"{k}: {v}\n"
 
     for sec, lines in resume.sections.items():
-        cv_text += f"\n=== {sec} ===\n"
-        applied, acc_sec, dis_sec = _apply_rewrites(sec, lines, acc_map, rewrite_suggestions, rewrite_decisions)
+        # HEADER is the parser's bucket for stray intro lines
+        if sec != "HEADER":
+            cv_text += f"\n=== {sec} ===\n"
+        if sec in section_overrides:
+            for line in section_overrides[sec].splitlines():
+                if line.strip():
+                    cv_text += line + "\n"
+            continue
+        applied, acc_sec, dis_sec = _apply_rewrites(sec, lines, acc_map, rewrite_suggestions, rewrite_decisions, mentor_overrides)
         acc_items.extend(acc_sec)
         dis_items.extend(dis_sec)
         for line in applied:
             cv_text += line + "\n"
 
-    # cv_text already has decisions applied so just show final
-    section_names = list(resume.sections.keys())
+    # cv_text already has decisions applied
+    section_names = [sec for sec in resume.sections.keys() if sec != "HEADER"]
     section_list = ", ".join(section_names) if section_names else "the sections present in the resume"
 
     sys_prompt = (
@@ -888,21 +931,25 @@ def gen_cv(
                        model=model, max_tokens=8192, api_key=api_key)
         result = raw.strip()
 
-        # if the model dropped a section anyway just add back
+        # if the model dropped a section anyway add it back
         missing_secs = [
             sec for sec in section_names
             if sec.upper() not in result.upper()
         ]
         for sec in missing_secs:
-            lines = resume.sections.get(sec, [])
-            if not lines:
-                continue
-            applied, _, _ = _apply_rewrites(sec, lines, acc_map, rewrite_suggestions, rewrite_decisions)
+            if sec in section_overrides:
+                applied = [line for line in section_overrides[sec].splitlines() if line.strip()]
+            else:
+                lines = resume.sections.get(sec, [])
+                if not lines:
+                    continue
+                applied, _, _ = _apply_rewrites(sec, lines, acc_map, rewrite_suggestions, rewrite_decisions, mentor_overrides)
             result += f"\n\n## {sec}\n---\n" + "\n".join(f"- {line}" for line in applied)
         return result
     except Exception as e:
+        # this used to return the error string as the "generated CV" on a 200
         print(f"cv generation failed: {e}")
-        return f"CV generation failed: {e}"
+        raise
 
 
 def gen_cover_letter(
@@ -955,4 +1002,4 @@ def gen_cover_letter(
         return raw.strip()
     except Exception as e:
         print(f"cover letter generation failed: {e}")
-        return f"Cover letter generation failed: {e}"
+        raise

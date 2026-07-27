@@ -7,8 +7,8 @@ from parser import ParsedResume
 
 
 def load_cases(path: str) -> list[dict]:
-    with open(path, "r") as file:
-        data = json.load(file)
+    with open(path, "r") as f:
+        data = json.load(f)
     if not isinstance(data, list):
         raise ValueError("Benchmark fixtures must be a JSON array.")
     return data
@@ -54,8 +54,8 @@ def main() -> None:
         results.append(run_case(case, args.provider, args.model, args.local_endpoint, False))
         results.append(run_case(case, args.provider, args.model, args.local_endpoint, True))
 
-    with open(args.output, "w") as file:
-        json.dump(results, file, indent=2)
+    with open(args.output, "w") as f:
+        json.dump(results, f, indent=2)
 
 
 if __name__ == "__main__":
