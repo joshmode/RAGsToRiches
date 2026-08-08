@@ -1,11 +1,12 @@
 import os
-import random
 import time
 import threading
 import ipaddress
 import socket
 from urllib.parse import urlparse
 import requests
+
+from provider_errors import EmptyResponseError, backoff_seconds, classify
 
 
 _PLACEHOLDER_VALS = {
@@ -168,7 +169,7 @@ def _dispatch(
 
                     cfg = types.GenerateContentConfig(**cfg_kw)
                     resp = client.models.generate_content(model=mdl, contents=user_prompt, config=cfg)
-                    if resp.text is None: raise ValueError("API returned None (safety block).")
+                    if resp.text is None: raise EmptyResponseError("Gemini returned no content (likely a safety block).")
                     return resp.text
 
                 elif provider == "claude":
@@ -182,7 +183,7 @@ def _dispatch(
                         system=system_prompt,
                         messages=[{"role": "user", "content": user_prompt}]
                     )
-                    if msg.content[0].text is None: raise ValueError("Claude returned None.")
+                    if msg.content[0].text is None: raise EmptyResponseError("Claude returned no content.")
                     return msg.content[0].text
 
                 elif provider == "chatgpt":
@@ -198,7 +199,7 @@ def _dispatch(
                             {"role": "user", "content": user_prompt}
                         ]
                     )
-                    if res.choices[0].message.content is None: raise ValueError("ChatGPT returned None.")
+                    if res.choices[0].message.content is None: raise EmptyResponseError("ChatGPT returned no content.")
                     return res.choices[0].message.content
 
                 elif provider == "openrouter":
@@ -215,7 +216,7 @@ def _dispatch(
                             {"role": "user", "content": user_prompt}
                         ]
                     )
-                    if res.choices[0].message.content is None: raise ValueError("OpenRouter returned None.")
+                    if res.choices[0].message.content is None: raise EmptyResponseError("OpenRouter returned no content.")
                     return res.choices[0].message.content
 
                 elif provider == "groq":
@@ -232,7 +233,7 @@ def _dispatch(
                             {"role": "user", "content": user_prompt}
                         ]
                     )
-                    if res.choices[0].message.content is None: raise ValueError("Groq returned None.")
+                    if res.choices[0].message.content is None: raise EmptyResponseError("Groq returned no content.")
                     return res.choices[0].message.content
 
                 elif provider == "local":
@@ -248,24 +249,23 @@ def _dispatch(
                     res = requests.post(local_endpoint, json=payload, timeout=timeout)
                     res.raise_for_status()
                     content = res.json().get("message", {}).get("content")
-                    if content is None: raise ValueError("Local model returned None.")
+                    if content is None: raise EmptyResponseError("Local model returned no content.")
                     return content
 
 
         except Exception as e:
             last_err = e
-            err_str = str(e).lower()
-            if attempt < max_retries - 1:
-                # jitter spreads concurrent retries out
-                if any(x in err_str for x in ["429", "too many requests", "quota"]):
-                    time.sleep(min(60, 4 * (2 ** attempt)) + random.uniform(0, 1))
-                    continue
-                elif any(x in err_str for x in ["500", "503", "unavailable", "timeout", "internal error", "name resolution", "errno -3", "connection"]):
-                    time.sleep(min(30, 2 ** (attempt + 1)) + random.uniform(0, 1))
-                    continue
-                elif "none" in err_str and attempt == 0:
-                    time.sleep(2 + random.uniform(0, 1))
-                    continue
-            break
+            failure = classify(e)
+            delay = backoff_seconds(failure, attempt) if attempt < max_retries - 1 else None
+            if delay is None:
+                # Terminal, or out of attempts. Retrying a bad key or a malformed
+                # request just burns latency for an identical failure.
+                break
+            print(
+                f"{provider} call failed ({failure}), retrying in {delay:.1f}s "
+                f"(attempt {attempt + 1}/{max_retries}): {e}"
+            )
+            time.sleep(delay)
+            continue
 
     raise last_err

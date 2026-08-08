@@ -1,8 +1,11 @@
+import json
 import logging
 import os
 import base64
 import io
-from flask import Flask, request, jsonify, send_file
+import queue
+import threading
+from flask import Flask, Response, request, jsonify, send_file, stream_with_context
 from werkzeug.exceptions import HTTPException
 from dotenv import load_dotenv, dotenv_values
 
@@ -117,6 +120,68 @@ def analyse_endpoint():
     )
     results.pop("parsed_resume_obj", None)
     return jsonify(results)
+
+
+@app.route("/analyse-stream", methods=["POST"])
+def analyse_stream_endpoint():
+    """Server-sent events carrying analysis progress.
+
+    Token streaming does not fit this pipeline: bullets are batched six to a call
+    and the batches run in parallel, so there is no single response to stream. What
+    is useful is *progress* — each batch's rewrites are emitted the moment they
+    land, so a thirty-bullet resume fills in as it goes instead of after everything
+    finishes.
+
+    Additive: ``/analyse`` is unchanged and remains the path the job runner uses.
+    """
+    data = _get_json_body()
+    resume = _resume_from_json(data.get("resume_json", {}))
+    jd = data.get("job_description", "")
+    provider = data.get("provider", "gemini")
+    model = data.get("model", "")
+    use_critic = data.get("use_critic", False)
+    local_endpoint = data.get("local_endpoint", "")
+    api_key = data.get("api_key", "")
+
+    def event_stream():
+        events: queue.Queue = queue.Queue()
+        sentinel = object()
+
+        def worker():
+            try:
+                results = analyse(
+                    resume=resume, job_description=jd, provider=provider,
+                    local_endpoint=local_endpoint, use_critic=use_critic,
+                    model=model, api_key=api_key,
+                    progress=events.put,
+                )
+                results.pop("parsed_resume_obj", None)
+                events.put({"stage": "done", "result": results})
+            except Exception as err:
+                app.logger.exception("streamed analysis failed")
+                events.put({"stage": "error", "error": "Analysis failed. Please try again."})
+                app.logger.debug("streamed analysis error detail: %s", err)
+            finally:
+                events.put(sentinel)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+        while True:
+            event = events.get()
+            if event is sentinel:
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return Response(
+        stream_with_context(event_stream()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Stops reverse proxies buffering the stream into one response.
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.route("/gen-cv", methods=["POST"])
