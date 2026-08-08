@@ -585,6 +585,7 @@ function NotificationBadge({ count }) {
 }
 
 // cover letters number per company unlike resume attempts
+function numberClAtts(list) {
     const groups = {}
     for (const item of list) {
         const key = (item.company || "").trim().toLowerCase() || "__unknown__"
