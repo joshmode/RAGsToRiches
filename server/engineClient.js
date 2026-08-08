@@ -9,7 +9,7 @@ function sleep(ms) {
 }
 
 // retries a whole engine call
-export async function fetchEngineWithRetry(url, options, attempt = 0) {
+export async function fetchEngine(url, options, attempt = 0) {
     const res = await fetch(url, options)
 
     if (res.status === 429 && attempt < MAX_RETRIES) {
