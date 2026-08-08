@@ -1,0 +1,509 @@
+{
+  "description": "Labelled resume rewrite pairs for measuring the deterministic claim detectors. Labels reflect human judgement of the pair, independent of what the current implementation does.",
+  "label_definitions": {
+    "invented_metric": "the rewrite asserts a quantity the original did not support",
+    "role_escalation": "the rewrite claims more responsibility than the original stated"
+  },
+  "cases": [
+    {
+      "id": "clean-01",
+      "original": "Built the checkout API",
+      "rewritten": "Built a REST checkout API in Python",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-02",
+      "original": "Cut latency by 40%",
+      "rewritten": "Reduced p95 latency 40% by batching predictions",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "same figure, reworded"
+    },
+    {
+      "id": "clean-03",
+      "original": "Worked on the data pipeline",
+      "rewritten": "Worked on the ETL data pipeline for analytics",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-04",
+      "original": "Led the migration",
+      "rewritten": "Managed the database migration to Postgres",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "led and managed are the same tier"
+    },
+    {
+      "id": "clean-05",
+      "original": "Improved conversion",
+      "rewritten": "Improved checkout conversion by [X%]",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "placeholder is the honest output"
+    },
+    {
+      "id": "clean-06",
+      "original": "Joined the team in 2021 and shipped the billing API",
+      "rewritten": "Shipped the billing API since 2021",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "original already evidences shipping"
+    },
+    {
+      "id": "clean-07",
+      "original": "Designed the schema",
+      "rewritten": "Designed a normalised schema in third normal form",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-08",
+      "original": "Tested the payments flow",
+      "rewritten": "Tested and documented the payments flow",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-09",
+      "original": "Supported 10 users",
+      "rewritten": "Supported 10 customers on the platform",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "same magnitude, different noun"
+    },
+    {
+      "id": "clean-10",
+      "original": "Automated reporting",
+      "rewritten": "Automated the weekly reporting pipeline",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-11",
+      "original": "Analysed survey data",
+      "rewritten": "Analysed survey responses using pandas",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-12",
+      "original": "Mentored two junior engineers",
+      "rewritten": "Mentored 2 junior engineers",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "digit for word, same claim"
+    },
+    {
+      "id": "clean-13",
+      "original": "Rebuilt the search index",
+      "rewritten": "Rebuilt and tuned the search index",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-14",
+      "original": "Fixed a memory leak",
+      "rewritten": "Diagnosed and fixed a memory leak in the worker",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-15",
+      "original": "Deployed to production weekly",
+      "rewritten": "Deployed to production on a weekly cadence",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-16",
+      "original": "Built internal tooling",
+      "rewritten": "Built internal tooling used across the team",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-17",
+      "original": "Reviewed pull requests",
+      "rewritten": "Reviewed pull requests and gave written feedback",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-18",
+      "original": "Documented the API",
+      "rewritten": "Documented the public API endpoints",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-19",
+      "original": "Contributed to the design system",
+      "rewritten": "Contributed components to the design system",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "clean-20",
+      "original": "Owned the release process",
+      "rewritten": "Owned and streamlined the release process",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-01",
+      "original": "Worked on the checkout system",
+      "rewritten": "Improved checkout conversion by 40%",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": true
+      },
+      "note": "also participation to execution"
+    },
+    {
+      "id": "metric-02",
+      "original": "Built an internal dashboard",
+      "rewritten": "Built a dashboard used by 200 employees",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-03",
+      "original": "Optimised the query layer",
+      "rewritten": "Optimised the query layer, cutting response time 60%",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-04",
+      "original": "Ran experiments on the ranking model",
+      "rewritten": "Ran A/B experiments across 3 variants",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-05",
+      "original": "Migrated the service to containers",
+      "rewritten": "Migrated 12 microservices to Kubernetes",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-06",
+      "original": "Reduced infrastructure costs",
+      "rewritten": "Reduced infrastructure costs by $40,000 annually",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-07",
+      "original": "Supported customers through onboarding",
+      "rewritten": "Supported 500 customers with a 98% satisfaction rate",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-08",
+      "original": "Improved test coverage",
+      "rewritten": "Raised test coverage from 40% to 85%",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-09",
+      "original": "Wrote internal documentation",
+      "rewritten": "Wrote documentation adopted by 6 teams",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-10",
+      "original": "Trained a classification model",
+      "rewritten": "Trained a model reaching 94% accuracy",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-11",
+      "original": "Scaled the ingestion pipeline",
+      "rewritten": "Scaled the pipeline to 1,000,000 records per day",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-12",
+      "original": "Sped up the build",
+      "rewritten": "Cut build time by 3x",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-13",
+      "original": "Handled inbound support tickets",
+      "rewritten": "Resolved 300 support tickets",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-14",
+      "original": "Refactored the auth module",
+      "rewritten": "Refactored the auth module, removing 2000 lines",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "metric-15",
+      "original": "Presented findings to the team",
+      "rewritten": "Presented findings to 30 stakeholders",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "role-01",
+      "original": "Helped with the database migration",
+      "rewritten": "Led the database migration",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "role-02",
+      "original": "Assisted the design team",
+      "rewritten": "Directed the design team",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "role-03",
+      "original": "Worked on the payments service",
+      "rewritten": "Owned the payments service",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "role-04",
+      "original": "Was part of the platform team",
+      "rewritten": "Headed the platform team",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "role-05",
+      "original": "Contributed to the API redesign",
+      "rewritten": "Architected the API redesign",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "role-06",
+      "original": "Supported the release process",
+      "rewritten": "Managed the release process",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "role-07",
+      "original": "Collaborated on the ML pipeline",
+      "rewritten": "Spearheaded the ML pipeline",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "role-08",
+      "original": "Participated in code reviews",
+      "rewritten": "Oversaw code reviews across the team",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "role-09",
+      "original": "Was responsible for weekly reporting",
+      "rewritten": "Drove the reporting overhaul",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "role-10",
+      "original": "Assisted with onboarding materials",
+      "rewritten": "Established the onboarding programme",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "both-01",
+      "original": "Helped with the checkout system",
+      "rewritten": "Led the checkout rebuild, lifting conversion 40%",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "both-02",
+      "original": "Assisted with reporting",
+      "rewritten": "Automated reporting for 12 teams",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "both-03",
+      "original": "Worked on the data pipeline",
+      "rewritten": "Owned the pipeline, cutting runtime 55%",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "both-04",
+      "original": "Contributed to the mobile app",
+      "rewritten": "Directed the mobile rebuild used by 50,000 users",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "both-05",
+      "original": "Supported QA for the release",
+      "rewritten": "Managed QA, reducing escaped defects 30%",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": true
+      },
+      "note": ""
+    }
+  ]
+}

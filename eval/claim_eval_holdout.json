@@ -1,0 +1,209 @@
+{
+  "description": "Held-out cases, not used to tune the detectors.",
+  "label_definitions": {
+    "invented_metric": "the rewrite asserts a quantity the original did not support",
+    "role_escalation": "the rewrite claims more responsibility than the original stated"
+  },
+  "cases": [
+    {
+      "id": "h-01",
+      "original": "Improved throughput",
+      "rewritten": "Doubled throughput",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": "implicit multiplier, no digits"
+    },
+    {
+      "id": "h-02",
+      "original": "Cut infrastructure costs",
+      "rewritten": "Cut infrastructure costs by forty percent",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": "spelled-out percentage"
+    },
+    {
+      "id": "h-03",
+      "original": "Worked with a couple of teams",
+      "rewritten": "Worked with 2 teams",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "'couple' is approximately two"
+    },
+    {
+      "id": "h-04",
+      "original": "Reduced latency from 800ms to 400ms",
+      "rewritten": "Halved latency from 800ms to 400ms",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "same figures restated"
+    },
+    {
+      "id": "h-05",
+      "original": "Was on the team that shipped the API",
+      "rewritten": "Shipped the API",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": "credit shift, not a verb-tier move"
+    },
+    {
+      "id": "h-06",
+      "original": "Built a feature used by the sales team",
+      "rewritten": "Built a feature used company-wide",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "scope widening: neither detector models this"
+    },
+    {
+      "id": "h-07",
+      "original": "Supported the migration I led",
+      "rewritten": "Led the migration",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "original already evidences ownership"
+    },
+    {
+      "id": "h-08",
+      "original": "Assisted in reviewing code",
+      "rewritten": "Reviewed code",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": "participation to execution"
+    },
+    {
+      "id": "h-09",
+      "original": "Coordinated the rollout",
+      "rewritten": "Led the rollout",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "same tier"
+    },
+    {
+      "id": "h-10",
+      "original": "Helped debug the ingestion pipeline",
+      "rewritten": "Debugged the ingestion pipeline",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "h-11",
+      "original": "Grew the user base",
+      "rewritten": "Grew the user base 5x",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "h-12",
+      "original": "Delivered the project on time",
+      "rewritten": "Delivered the project 2 weeks early",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "h-13",
+      "original": "Handled 1,200 records nightly",
+      "rewritten": "Processed 1200 records nightly",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": false
+      },
+      "note": "comma formatting only"
+    },
+    {
+      "id": "h-14",
+      "original": "Ran the daily standup",
+      "rewritten": "Ran the daily standup for 8 engineers",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "h-15",
+      "original": "Trained new interns",
+      "rewritten": "Trained 3 interns",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": ""
+    },
+    {
+      "id": "h-16",
+      "original": "Contributed 15% of the codebase",
+      "rewritten": "Wrote 15% of the codebase",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": "same metric, higher tier"
+    },
+    {
+      "id": "h-17",
+      "original": "Shadowed the on-call rotation",
+      "rewritten": "Owned the on-call rotation",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": ""
+    },
+    {
+      "id": "h-18",
+      "original": "Improved uptime to 99.9%",
+      "rewritten": "Improved uptime to 99.99%",
+      "labels": {
+        "invented_metric": true,
+        "role_escalation": false
+      },
+      "note": "figure quietly changed"
+    },
+    {
+      "id": "h-19",
+      "original": "Worked on three services",
+      "rewritten": "Migrated 3 services",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": "word-to-digit is the same claim"
+    },
+    {
+      "id": "h-20",
+      "original": "Presented at a conference",
+      "rewritten": "Keynoted a conference",
+      "labels": {
+        "invented_metric": false,
+        "role_escalation": true
+      },
+      "note": "neither verb is in the ladder"
+    }
+  ]
+}

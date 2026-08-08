@@ -1,5 +1,6 @@
 import os
 import hashlib
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -61,28 +62,144 @@ def _get_col() -> Any:
     return _col
 
 
-_fw_cache: dict[str, tuple[float, list[FwHit]]] = {}
+@dataclass
+class _CacheEntry:
+    stored_at: float
+    hits: list[FwHit]
+    embedding: list[float] | None  # L2-normalised, so similarity is a dot product
+
+
+_fw_cache: dict[str, _CacheEntry] = {}
 _fw_cache_lock = threading.Lock()
 _CACHE_TTL_SECONDS = 3600
+_CACHE_MAX_ENTRIES = 256
+
+# Two bullets this close ask for the same writing framework. Tuned conservatively:
+# a miss only costs the retrieval we were going to do anyway, whereas a false hit
+# would hand a bullet guidance chosen for a different one.
+_SEMANTIC_THRESHOLD = float(os.environ.get("FW_SEMANTIC_THRESHOLD", "0.93"))
+_SEMANTIC_ENABLED = os.environ.get("FW_SEMANTIC_CACHE", "true").lower() != "false"
+
 _cache_hits = 0
 _cache_misses = 0
+_semantic_hits = 0
+
+
+def _normalise_vector(vector: list[float]) -> list[float] | None:
+    magnitude = math.sqrt(sum(value * value for value in vector))
+    if magnitude == 0:
+        return None
+    return [value / magnitude for value in vector]
+
+
+def _dot(left: list[float], right: list[float]) -> float:
+    if len(left) != len(right):
+        return 0.0
+    return sum(a * b for a, b in zip(left, right))
+
+
+_embedder = None
+_embedder_lock = threading.Lock()
+
+
+def _get_embedder() -> Any:
+    """The shared sentence-transformer, built once.
+
+    Constructing one per call would reload the model on every bullet, which costs
+    far more than the retrieval the cache exists to avoid.
+    """
+    global _embedder
+    if _embedder is not None:
+        return _embedder
+    with _embedder_lock:
+        if _embedder is None:
+            _embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name="all-MiniLM-L6-v2"
+            )
+    return _embedder
+
+
+def _embed(text: str) -> list[float] | None:
+    """Embed one query with the same model the collection is indexed under.
+
+    Returns ``None`` when embeddings are unavailable, in which case the caller
+    silently falls back to exact-key caching and behaves exactly as before.
+    """
+    if not _SEMANTIC_ENABLED or not CHROMA_AVAILABLE:
+        return None
+    try:
+        vectors = _get_embedder()([text])
+        if vectors is None or len(vectors) == 0:
+            return None
+        return _normalise_vector([float(value) for value in vectors[0]])
+    except Exception:
+        return None
+
+
+def _semantic_lookup(
+    embedding: list[float],
+    n_results: int,
+    now: float,
+) -> list[FwHit] | None:
+    """Best live cache entry within the similarity threshold, if any.
+
+    Caller must hold ``_fw_cache_lock``. Entries are already normalised, so the
+    scan is a dot product per entry — trivial at 256 entries of 384 dimensions.
+    """
+    best_hits: list[FwHit] | None = None
+    best_score = _SEMANTIC_THRESHOLD
+    for key, entry in _fw_cache.items():
+        if entry.embedding is None or now - entry.stored_at >= _CACHE_TTL_SECONDS:
+            continue
+        if not key.endswith(f"::{n_results}::v2"):
+            continue
+        score = _dot(embedding, entry.embedding)
+        if score >= best_score:
+            best_score = score
+            best_hits = entry.hits
+    return best_hits
 
 
 def query_fw(text: str, n_results: int = 3) -> list[FwHit]:
-    """retrieve the most relevant writing framework docs for RAG context."""
+    """Retrieve the most relevant writing framework docs for RAG context.
+
+    Two cache layers. An exact normalised-text key catches repeated bullets, then
+    a semantic layer catches near-duplicates ("Built the API" against "Built the
+    API gateway"), which the hash layer misses entirely.
+
+    Note what is deliberately *not* cached semantically: the generated rewrite.
+    Framework guidance is genuinely shared between similar bullets, but a rewrite
+    is specific to its bullet — serving a 0.95-similar bullet's rewrite would put
+    another bullet's wording on someone's CV. The cache only covers retrieval.
+    """
+    global _cache_hits, _cache_misses, _semantic_hits
+
     normalized = " ".join(text.split()).lower()
-    cache_key = f"{hashlib.sha256(normalized.encode('utf-8')).hexdigest()}::{n_results}::v1"
-    global _cache_hits, _cache_misses
+    cache_key = f"{hashlib.sha256(normalized.encode('utf-8')).hexdigest()}::{n_results}::v2"
+    now = time.monotonic()
+
     with _fw_cache_lock:
         cached = _fw_cache.get(cache_key)
-        if cached and time.monotonic() - cached[0] < _CACHE_TTL_SECONDS:
+        if cached and now - cached.stored_at < _CACHE_TTL_SECONDS:
             _cache_hits += 1
-            return cached[1]
+            return cached.hits
+
+    embedding = _embed(text)
+    if embedding is not None:
+        with _fw_cache_lock:
+            near = _semantic_lookup(embedding, n_results, time.monotonic())
+            if near is not None:
+                _cache_hits += 1
+                _semantic_hits += 1
+                return near
+
+    with _fw_cache_lock:
         _cache_misses += 1
 
     col = _get_col()
     n = min(n_results, col.count())
-    if n == 0: return []
+    if n == 0:
+        return []
 
     res = col.query(query_texts=[text], n_results=n, include=["documents", "metadatas", "distances"])
 
@@ -97,13 +214,40 @@ def query_fw(text: str, n_results: int = 3) -> list[FwHit]:
     ]
 
     with _fw_cache_lock:
-        if len(_fw_cache) > 256:
-            _fw_cache.clear()
-        _fw_cache[cache_key] = (time.monotonic(), hits)
+        if len(_fw_cache) >= _CACHE_MAX_ENTRIES:
+            _evict_locked()
+        _fw_cache[cache_key] = _CacheEntry(time.monotonic(), hits, embedding)
 
     return hits
 
 
+def _evict_locked() -> None:
+    """Drop expired entries, then the oldest, rather than clearing everything.
+
+    A full clear threw away a warm semantic cache on every 257th distinct bullet,
+    which is exactly when it had become useful.
+    """
+    now = time.monotonic()
+    for key in [k for k, e in _fw_cache.items() if now - e.stored_at >= _CACHE_TTL_SECONDS]:
+        _fw_cache.pop(key, None)
+    while len(_fw_cache) >= _CACHE_MAX_ENTRIES:
+        oldest = min(_fw_cache, key=lambda k: _fw_cache[k].stored_at)
+        _fw_cache.pop(oldest, None)
+
+
 def get_cache_stats() -> dict[str, int]:
     with _fw_cache_lock:
-        return {"hits": _cache_hits, "misses": _cache_misses, "entries": len(_fw_cache)}
+        return {
+            "hits": _cache_hits,
+            "misses": _cache_misses,
+            "semantic_hits": _semantic_hits,
+            "entries": len(_fw_cache),
+        }
+
+
+def reset_cache() -> None:
+    """Clear cache and counters. Used by tests."""
+    global _cache_hits, _cache_misses, _semantic_hits
+    with _fw_cache_lock:
+        _fw_cache.clear()
+        _cache_hits = _cache_misses = _semantic_hits = 0
