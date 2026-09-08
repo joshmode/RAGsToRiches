@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
@@ -8,6 +9,9 @@ import time
 from datetime import date
 from dotenv import load_dotenv
 
+from claims import has_new_claims as _has_new_claims
+from claims import new_quantitative_claims, verb_escalation
+from prompt_registry import prompt_set_version, prompt_versions, register
 from vector_db import query_fw
 from parser import ParsedResume
 from router import llm_call
@@ -94,23 +98,6 @@ def extract_jd_kws(job_desc: str, provider: str, local_endpoint: str, model: str
     return [str(kw).strip() for kw in parsed if isinstance(kw, (str, int, float)) and str(kw).strip()]
 
 
-_QUANT_RE = re.compile(r'(?<!\w)(?:\$?\d+(?:\.\d+)?(?:[%xX])?|\d+(?:\.\d+)?\s*(?:users?|people|clients?|customers?|hours?|days?|weeks?|months?|years?))(?!\w)', re.IGNORECASE)
-
-
-def _has_new_claims(original: str, rewritten: str) -> bool:
-    def claims(text: str) -> set[str]:
-        out = set()
-        for match in _QUANT_RE.findall(text):
-            if re.fullmatch(r"(?:19|20)\d{2}", match.strip()):
-                continue
-            out.add(match.lower())
-        return out
-
-    orig_claims = claims(original)
-    new_claims = claims(rewritten)
-    return bool(new_claims - orig_claims)
-
-
 def _critic_creds(provider: str, model: str, api_key: str, local_endpoint: str) -> tuple[str, str, str, str]:
     # CRITIC_SAME_AS_MAIN=false by default
     if os.environ.get("CRITIC_SAME_AS_MAIN", "true").lower() == "false":
@@ -124,6 +111,23 @@ def _critic_creds(provider: str, model: str, api_key: str, local_endpoint: str) 
     return provider, model, api_key, local_endpoint
 
 
+# The deterministic check has already found the flagged figures. The critic is not
+# asked to repeat that search — it is asked whether each one is genuinely
+# unsupported, which is the judgement a regex cannot make (a reworded but
+# equivalent figure, or a number the original implied).
+_NUMERIC_CRITIC_TEMPLATE = register("numeric_critic", (
+    "Compare these two text strings for factual consistency.\n"
+    "String A (original): {bullet}\n"
+    "String B (rewritten): {rewritten}\n"
+    "A checker flagged these figures in B as possibly absent from A: {flagged}\n"
+    "For each flagged figure, decide whether A genuinely supports it — "
+    "whether stated outright, implied, or the same quantity worded differently. "
+    "Placeholders like [X%] or [N users] are acceptable and are never a problem. "
+    "Reply FAIL if any flagged figure is unsupported by A, otherwise PASS. "
+    "Respond with exactly one word: PASS or FAIL followed by a colon and reason."
+))
+
+
 def _run_critic(
     bullet: str,
     rewritten: str,
@@ -135,21 +139,18 @@ def _run_critic(
     model: str,
     api_key: str = "",
 ) -> dict:
-    if not _has_new_claims(bullet, rewritten):
+    suspect = new_quantitative_claims(bullet, rewritten)
+    if not suspect:
         result["critic"] = {"status": "skipped", "reason": "No new quantitative claim detected."}
         return result
 
     provider, model, api_key, local_endpoint = _critic_creds(provider, model, api_key, local_endpoint)
 
     try:
-        critic_prompt = (
-            "Compare these two text strings for factual consistency.\n"
-            f"String A (original): {bullet}\n"
-            f"String B (rewritten): {rewritten}\n"
-            "Does string B contain any specific numbers, percentages, dollar amounts, "
-            "team sizes, or metrics that are NOT present in string A? "
-            "Placeholders like [X%] or [N users] are acceptable and should not be flagged. "
-            "Respond with exactly one word: PASS or FAIL followed by a colon and reason."
+        critic_prompt = _NUMERIC_CRITIC_TEMPLATE.format(
+            bullet=bullet,
+            rewritten=rewritten,
+            flagged=", ".join(sorted(suspect)),
         )
 
         critic_raw = llm_call(
@@ -194,7 +195,97 @@ def _run_critic(
     return result
 
 
-_REWRITE_SYS_PROMPT = (
+_QUALITATIVE_SYS_PROMPT = register("qualitative_system", (
+    "You audit resume rewrites for overstated claims. You are given numbered pairs "
+    "of an original bullet and its rewrite. Numeric invention is already checked "
+    "elsewhere — ignore it. Judge only whether the rewrite claims something about "
+    "the candidate that the original does not support:\n"
+    "  role      the rewrite claims more seniority, ownership or leadership\n"
+    "  credit    work done by a team or another person is now claimed personally\n"
+    "  scope     the rewrite widens the remit, impact or audience\n"
+    "  invented  an employer, technology, tool or qualification not in the original\n"
+    "Rewording, tightening, reordering and stronger phrasing of the same claim are "
+    "all fine and must not be flagged. Only flag a genuine change in what is claimed.\n"
+    "Respond with ONLY a JSON array with one object per pair, in the same order:\n"
+    '{"index": 0, "verdict": "ok" | "overstated", "kind": "role|credit|scope|invented|none", '
+    '"reason": "one short sentence"}'
+))
+
+
+def run_qualitative_critic(
+    pairs: list[tuple[str, str]],
+    provider: str,
+    local_endpoint: str,
+    model: str = "",
+    api_key: str = "",
+) -> list[dict | None]:
+    """Audit a batch of rewrites for claims a deterministic check cannot decide.
+
+    The verb ladder in ``claims`` catches the common escalation (an opening verb
+    moving up a tier). What it cannot see is mid-sentence escalation, credit
+    shifting ("was on the team that shipped X" becoming "shipped X"), scope
+    widening, or an invented technology. Those need judgement, so they go to a
+    model — but batched, one call per chunk rather than one per bullet, so the
+    coverage costs roughly what the old per-bullet gate did.
+
+    Findings are returned for surfacing, never for automatic reversion: unlike the
+    numeric path there is no deterministic re-check to make a repair provably safe,
+    and silently discarding an otherwise-good rewrite is the worse error.
+
+    Returns a list aligned with ``pairs``; ``None`` means no finding.
+    """
+    out: list[dict | None] = [None] * len(pairs)
+    candidates = [
+        (index, original, rewritten)
+        for index, (original, rewritten) in enumerate(pairs)
+        if rewritten and rewritten.strip() and rewritten.strip() != original.strip()
+    ]
+    if not candidates:
+        return out
+
+    provider, model, api_key, local_endpoint = _critic_creds(provider, model, api_key, local_endpoint)
+
+    block = "\n\n".join(
+        f"[{position}]\nORIGINAL: {original}\nREWRITE: {rewritten}"
+        for position, (_index, original, rewritten) in enumerate(candidates)
+    )
+    prompt = (
+        f"Audit these {len(candidates)} rewrite pairs.\n\n{block}\n\n"
+        f"Return a JSON array of exactly {len(candidates)} objects, one per pair, in order."
+    )
+
+    try:
+        raw = llm_call(
+            user_prompt=prompt, system_prompt=_QUALITATIVE_SYS_PROMPT,
+            provider=provider, local_endpoint=local_endpoint, model=model,
+            max_tokens=min(4096, 220 * len(candidates)), timeout=45, max_retries=1,
+            api_key=api_key,
+        )
+        parsed = _parse_json(raw)
+        if not isinstance(parsed, list) or len(parsed) != len(candidates):
+            raise ValueError(
+                f"expected {len(candidates)} verdicts, got "
+                f"{len(parsed) if isinstance(parsed, list) else type(parsed).__name__}"
+            )
+        for (index, _original, _rewritten), verdict in zip(candidates, parsed):
+            if not isinstance(verdict, dict):
+                continue
+            if str(verdict.get("verdict", "")).strip().lower() != "overstated":
+                continue
+            kind = str(verdict.get("kind", "role")).strip().lower()
+            if kind not in ("role", "credit", "scope", "invented"):
+                kind = "role"
+            out[index] = {
+                "kind": kind,
+                "reason": str(verdict.get("reason", "")).strip()[:300],
+            }
+    except Exception as err:
+        # Isolated failure: the rewrites stand, the audit is simply absent.
+        print(f"qualitative critic skipped: {err}")
+    return out
+
+
+_REWRITE_SYS_PROMPT = register("rewrite_system", (
     "You are an expert resume coach. Rewrite weak resume bullets into strong, "
     "ATS-optimised, results-driven statements using the STAR method "
     "(Situation, Task, Action, Result) or Google XYZ framework where applicable. "
@@ -207,23 +298,23 @@ _REWRITE_SYS_PROMPT = (
     "You MUST apply one of the provided writing frameworks. "
     f"\n\nBANNED WORDS (never use these): {_BANNED_WORDS}\n"
     "Always respond with valid JSON only, no markdown."
-)
+))
 
-_RESULT_SCHEMA = (
+_RESULT_SCHEMA = register("result_schema", (
     "{\n"
     '  "rewritten": "the improved bullet point",\n'
     '  "reasoning": "one sentence: what was weak, what framework was applied, what changed",\n'
     '  "framework_used": "Google XYZ | STAR | Rule of 3 | Action Verb | other",\n'
     '  "severity": "red | yellow | green"\n'
     "}"
-)
+))
 
-_SEVERITY_GUIDE = (
+_SEVERITY_GUIDE = register("severity_guide", (
     "Severity guide — rate the ORIGINAL bullet, not the rewrite: "
     "red = very weak passive language, missing action verb, or no discernible impact. "
     "yellow = structurally okay but missing a metric or could be stronger. "
     "green = already strong; only minor polish applied."
-)
+))
 
 
 def _build_rewrite_prompts(bullet: str, frameworks: list[Any], missing_kws: list[str]) -> tuple[str, str]:
@@ -245,6 +336,26 @@ def _normalise_severity(result: dict) -> dict:
     if sev not in ("red", "yellow", "green"):
         sev = "yellow"
     result["severity"] = sev
+    return result
+
+
+def _finalise(result: dict, original: str) -> dict:
+    """Stamp the source bullet on a rewrite and attach deterministic findings.
+
+    A role escalation ("helped with X" rewritten as "led X") is surfaced rather
+    than reverted. The rest of the rewrite is usually fine, and the candidate
+    already accepts or rejects each suggestion individually — so the honest move
+    is to tell them what the model changed and let them decide, not to silently
+    discard work. It is excluded from the action-verb score either way, so the
+    rubric can never reward an escalation.
+    """
+    result["original"] = original
+    _normalise_severity(result)
+    escalation = verb_escalation(original, result.get("rewritten") or original)
+    if escalation:
+        result["verb_escalation"] = escalation
+    else:
+        result.pop("verb_escalation", None)
     return result
 
 
@@ -272,8 +383,7 @@ def rewrite_item(
                 usr_prompt, sys_prompt, provider, local_endpoint, model, api_key=api_key,
             )
 
-        result["original"] = bullet
-        return result
+        return _finalise(result, bullet)
 
     except Exception as e:
         print(f"bullet rewrite bypassed: {e}")
@@ -334,9 +444,7 @@ def rewrite_chunk(
         for (text, _fws), item_result in zip(items, parsed):
             if not isinstance(item_result, dict):
                 raise ValueError("chunk response item was not a JSON object")
-            item_result = _normalise_severity(dict(item_result))
-            item_result["original"] = text
-            results.append(item_result)
+            results.append(_finalise(dict(item_result), text))
 
     except Exception as e:
         print(f"chunk rewrite failed ({len(items)} bullets), falling back to per-bullet calls: {e}")
@@ -352,7 +460,17 @@ def rewrite_chunk(
                 text, results[i].get("rewritten", text), results[i],
                 usr_prompt_single, sys_prompt, provider, local_endpoint, model, api_key=api_key,
             )
-            results[i]["original"] = text
+            results[i] = _finalise(results[i], text)
+
+        # One batched pass for the claims a regex cannot decide. Runs after the
+        # numeric loop so it audits the text that actually survived it.
+        audits = run_qualitative_critic(
+            [(text, results[i].get("rewritten", text)) for i, (text, _fws) in enumerate(items)],
+            provider, local_endpoint, model=model, api_key=api_key,
+        )
+        for i, audit in enumerate(audits):
+            if audit:
+                results[i]["overstated"] = audit
 
     return results
 
@@ -559,6 +677,7 @@ def calc_score(resume: ParsedResume, jd_kws: list[str], missing: list[str], rewr
     qual = 0
     actionable_n = 0
     verb_hits = 0
+    escalations = 0
     section_scores: dict[str, dict] = {}
 
     # the heatmap grades every bullet the model actually looked at
@@ -575,14 +694,21 @@ def calc_score(resume: ParsedResume, jd_kws: list[str], missing: list[str], rewr
             sev_counts[sev] = sev_counts.get(sev, 0) + 1
             sec_qual += {"green": 3, "yellow": 2, "red": 1}.get(sev, 1)
             lead_word = item.get("rewritten", "").split()[0].lower().rstrip(".,;:") if item.get("rewritten", "").strip() else ""
-            if lead_word in _ACTION_VERBS:
+            # An escalated verb ("helped" rewritten as "led") must not earn the
+            # action-verb point, or the rubric rewards the exact fabrication the
+            # claim checks exist to catch.
+            escalated = bool(item.get("verb_escalation"))
+            if escalated:
+                escalations += 1
+            strong_verb = lead_word in _ACTION_VERBS and not escalated
+            if strong_verb:
                 sec_verbs += 1
 
             changed = item.get("original") != item.get("rewritten")
             if changed:
                 actionable_n += 1
                 qual += {"green": 2, "yellow": 1, "red": 0}.get(sev, 0)
-                if lead_word in _ACTION_VERBS:
+                if strong_verb:
                     verb_hits += 1
         if sec_count > 0:
             section_scores[sec_name] = {
@@ -609,7 +735,9 @@ def calc_score(resume: ParsedResume, jd_kws: list[str], missing: list[str], rewr
 
     total = sum(v for k, v in bd.items() if k != "total")
     bd["total"] = max(0, min(100, total))
+    # Added after the sum: these are diagnostics, not score components.
     bd["section_scores"] = section_scores
+    bd["verb_escalations"] = escalations
     return bd
 
 
@@ -621,8 +749,27 @@ def analyse(
     use_critic: bool = False,
     model: str = "",
     api_key: str = "",
+    progress: Callable[[dict], None] | None = None,
 ) -> dict:
+    """Analyse a resume against a job description.
+
+    ``progress`` receives stage events as the pipeline advances. It is optional
+    and purely additive: the returned value is identical whether or not it is
+    supplied, so the existing request/response path is unaffected. Events are
+    emitted from the collecting thread, never from a worker, so the callback does
+    not need to be thread-safe.
+    """
+    def emit(stage: str, **fields: Any) -> None:
+        if progress is None:
+            return
+        try:
+            progress({"stage": stage, **fields})
+        except Exception as progress_err:
+            # A broken consumer must not take the analysis down with it.
+            print(f"progress callback failed: {progress_err}")
+
     t_start = time.perf_counter()
+    emit("started")
 
     # kw extraction run concurrently 
     t_kw = time.perf_counter()
@@ -657,6 +804,8 @@ def analyse(
             )
             jobs.append((sec, i, unit))
 
+    emit("planned", bullets=len(jobs))
+
     t_retrieval = time.perf_counter()
     fw_cache_local: dict[str, list] = {}
     for sec, i, unit in jobs:
@@ -665,6 +814,7 @@ def analyse(
             if text not in fw_cache_local:
                 fw_cache_local[text] = query_fw(text, n_results=2)
     t_retrieval = time.perf_counter() - t_retrieval
+    emit("retrieved", retrieval_ms=int(t_retrieval * 1000))
 
     # join the keyword extraction started before the local work
     jd_kws: list[str] = []
@@ -677,6 +827,7 @@ def analyse(
             kw_extraction_failed = True
     kw_pool.shutdown(wait=False)
     t_kw = time.perf_counter() - t_kw
+    emit("keywords", found=len(jd_kws), failed=kw_extraction_failed)
 
     resume_lower = resume.raw_text.lower()
     missing = [kw for kw in jd_kws if not _kw_in_resume(kw, resume_lower)]
@@ -719,6 +870,8 @@ def analyse(
         return out
 
     workers = min(3 if use_critic else 8, max(len(chunks), 1))
+    completed = 0
+    emit("rewriting", chunks=len(chunks), bullets=len(eligible_jobs), workers=workers)
     t_rewrite = time.perf_counter()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_do_chunk, chunk): idx for idx, chunk in enumerate(chunks)}
@@ -741,6 +894,13 @@ def analyse(
                     chunk_out.append((sec, i, rw))
             for sec, i, rw in chunk_out:
                 results_by_sec.setdefault(sec, []).append((i, rw))
+            completed += 1
+            emit(
+                "chunk",
+                completed=completed,
+                total=len(chunks),
+                rewrites=[rw for _sec, _i, rw in chunk_out],
+            )
     t_rewrite = time.perf_counter() - t_rewrite
 
     for sec, items in results_by_sec.items():
@@ -751,11 +911,18 @@ def analyse(
     freqs = kw_freqs(jd_kws, resume.raw_text)
     t_total = time.perf_counter() - t_start
     critic_counts: dict[str, int] = {}
+    guard_counts = {"verb_escalation": 0, "overstated": 0}
     for section in rewrites.values():
         for item in section:
             status = item.get("critic", {}).get("status")
             if status:
                 critic_counts[status] = critic_counts.get(status, 0) + 1
+            if item.get("verb_escalation"):
+                guard_counts["verb_escalation"] += 1
+            if item.get("overstated"):
+                guard_counts["overstated"] += 1
+
+    emit("scored", score=score.get("total", 0))
 
     return {
         "contact":             resume.contact,
@@ -776,7 +943,10 @@ def analyse(
             "rewriting_ms":  int(t_rewrite * 1000),
             "total_ms":      int(t_total * 1000),
         },
-        "critic": critic_counts,
+        "critic":              critic_counts,
+        "claim_guard":         guard_counts,
+        "prompt_versions":     prompt_versions(),
+        "prompt_set_version":  prompt_set_version(),
     }
 
 

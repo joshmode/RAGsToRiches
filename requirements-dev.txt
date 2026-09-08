@@ -1,0 +1,7 @@
+# Test dependencies. Runtime deps are in requirements.txt / requirements-engine.txt.
+#
+# The suite deliberately does not need chromadb, torch or a provider SDK: the
+# vector store, the embedder and every model call are stubbed, so the guards and
+# the transport can be tested offline and in CI without a GPU or an API key.
+-r requirements.txt
+pytest>=8.0

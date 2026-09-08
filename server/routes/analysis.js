@@ -134,6 +134,85 @@ async function run(engineUrl, jobId, payload) {
     }
 }
 
+// Streams analysis progress straight through from the engine as server-sent
+// events. Additive: /run and its job+polling path are untouched and remain the
+// default. This exists so a long analysis fills in as it goes rather than
+// landing all at once, which is most of the perceived latency.
+router.post("/stream", requireAuth, llmLimiter, async (req, res) => {
+    const { resume_json, job_description, provider, use_critic, local_endpoint, resume_id } = req.body
+    const resumeId = parseInt(resume_id)
+    if (!resumeId || !getResume(resumeId, req.user.id)) {
+        return res.status(404).json({ error: "Resume not found." })
+    }
+    if (!PROVIDER_CHOICES.has(provider)) {
+        return res.status(400).json({ error: "Unknown provider." })
+    }
+    if (provider === "local" && process.env.ALLOW_LOCAL_PROVIDER !== "true") {
+        return res.status(403).json({ error: "Local model endpoints are disabled for this deployment." })
+    }
+
+    let engineProvider, apiKey
+    try {
+        ({ engineProvider, apiKey } = resolveProvider(req.user.id, provider))
+    } catch (err) {
+        if (err instanceof ProviderError) return res.status(err.status).json({ error: err.message })
+        throw err
+    }
+
+    let upstream
+    try {
+        upstream = await fetch(`${req.app.locals.engineUrl}/analyse-stream`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                resume_json,
+                job_description,
+                provider: engineProvider,
+                use_critic,
+                local_endpoint,
+                api_key: apiKey,
+            }),
+        })
+    } catch {
+        return res.status(502).json({ error: "The analysis engine is unreachable." })
+    }
+
+    if (!upstream.ok || !upstream.body) {
+        return res.status(502).json({ error: "The analysis engine could not start the stream." })
+    }
+
+    // Headers must go out before the first chunk, and buffering must be off at
+    // every hop or the whole point is lost.
+    res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+    })
+    res.flushHeaders?.()
+
+    // If the client goes away, stop pulling from the engine rather than reading
+    // the whole analysis into a socket nobody is listening to.
+    let closed = false
+    res.on("close", () => {
+        closed = true
+        upstream.body.destroy?.()
+    })
+
+    try {
+        for await (const chunk of upstream.body) {
+            if (closed) break
+            res.write(chunk)
+        }
+    } catch (err) {
+        if (!closed) {
+            res.write(`data: ${JSON.stringify({ stage: "error", error: "The analysis stream was interrupted." })}\n\n`)
+        }
+    } finally {
+        if (!closed) res.end()
+    }
+})
+
 router.post("/run", requireAuth, llmLimiter, (req, res) => {
     const { resume_json, job_description, provider, use_critic, local_endpoint, resume_id } = req.body
     const resumeId = parseInt(resume_id)

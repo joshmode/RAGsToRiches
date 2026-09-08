@@ -32,3 +32,6 @@ chroma_db/
 # OS-generated files
 .DS_Store
 Thumbs.db
+
+# test artifacts
+.pytest_cache/
