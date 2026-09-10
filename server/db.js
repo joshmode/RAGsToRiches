@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
 
@@ -292,6 +293,7 @@ function deleteGuest(db, userId) {
 
 export function getDb() {
     if (!_db) {
+        fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
         _db = new Database(DB_PATH)
         _db.pragma("journal_mode = WAL")
         _db.pragma("foreign_keys = ON")

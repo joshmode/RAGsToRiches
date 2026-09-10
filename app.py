@@ -1149,16 +1149,18 @@ def _keywords_tab(jd_kws: list[str], missing: list[str], present: list[str], fre
     with miss_col:
         st.markdown(f'<span class="section-label"> Missing ({len(missing)})</span>', unsafe_allow_html=True)
         chips = "".join(f'<span class="kw-missing">{html.escape(kw)}</span>' for kw in missing)
+        empty_msg = "<i style='color:#a1a1aa'>None — great coverage!</i>"
         st.markdown(
-            f'<div class="kw-wrap">{chips or "<i style=\'color:#a1a1aa\'>None — great coverage!</i>"}</div>',
+            f'<div class="kw-wrap">{chips or empty_msg}</div>',
             unsafe_allow_html=True,
         )
 
     with have_col:
         st.markdown(f'<span class="section-label"> Present ({len(present)})</span>', unsafe_allow_html=True)
         chips = "".join(f'<span class="kw-present">{html.escape(kw)} <span style="opacity:0.7;font-size:0.8em">({freqs.get(kw, 0)})</span></span>' for kw in present)
+        empty_msg = "<i style='color:#a1a1aa'>No matches found</i>"
         st.markdown(
-            f'<div class="kw-wrap">{chips or "<i style=\'color:#a1a1aa\'>No matches found</i>"}</div>',
+            f'<div class="kw-wrap">{chips or empty_msg}</div>',
             unsafe_allow_html=True,
         )
 
