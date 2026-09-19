@@ -832,7 +832,7 @@ textarea.doc-editor { min-height: 640px; margin: 0; line-height: 1.6; font-famil
     max-height: calc(100vh - 2.5rem);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible;
 }
 /* two content trees */
 .sidebar-content-fade {
