@@ -15,12 +15,15 @@ from prompt_registry import prompt_set_version, prompt_versions, register
 from vector_db import query_fw
 from parser import ParsedResume
 from router import llm_call
-from scoring import bullet_signals, score_bullets
+from scoring import action_verb_strength, bullet_signals, is_strong, score_bullets
 
 load_dotenv()
 
 # bullets bundled into one llm call during rewriting
 _CHUNK_SIZE = max(1, int(os.environ.get("REWRITE_CHUNK_SIZE", "6")))
+
+# a bullet the rubric already rates as strong is left alone unless this is set
+_REWRITE_STRONG_BULLETS = os.environ.get("REWRITE_STRONG_BULLETS", "false").lower() == "true"
 
 # banned ai jargon that make resumes sound generic
 _BANNED_WORDS = (
@@ -756,6 +759,18 @@ def _build_units(sec: str, lines: list[str]) -> list[dict[str, Any]]:
 
 _PRIMARY_SECTIONS = ("EXPERIENCE", "PROJECTS", "VOLUNTEER", "SUMMARY")
 
+# lists and citations. an XYZ rewrite of "Python, Go, SQL" is wasted tokens at best
+_LIST_SECTIONS = frozenset({"SKILLS", "LANGUAGES", "INTERESTS", "REFERENCES", "CERTIFICATIONS", "PUBLICATIONS"})
+
+
+def _looks_like_list(text: str) -> bool:
+    """"Python, Go, SQL" or "Coursework: Algorithms, Databases, Networks", not a sentence"""
+    body = text.split(":", 1)[1] if ":" in text[:40] else text
+    parts = [part.strip() for part in re.split(r'[,;|•·]', body) if part.strip()]
+    if len(parts) < 3:
+        return False
+    return sum(len(part.split()) for part in parts) / len(parts) <= 3 and action_verb_strength(text) == 0
+
 
 def _plan_units(resume: ParsedResume) -> list[tuple[str, int, dict[str, Any]]]:
     """Every unit the pipeline looks at, with its final eligibility.
@@ -769,7 +784,8 @@ def _plan_units(resume: ParsedResume) -> list[tuple[str, int, dict[str, Any]]]:
         if not lines:
             continue
         for i, unit in enumerate(_build_units(sec, lines)):
-            unit["eligible"] = unit["eligible"] and not _is_header(unit["text"], section=sec)
+            text = unit["text"]
+            unit["eligible"] = unit["eligible"] and not _is_header(text, section=sec) and not _looks_like_list(text)
             jobs.append((sec, i, unit))
 
     # everything else the parser found. this was a fixed whitelist once and it kept drifting out
@@ -780,9 +796,11 @@ def _plan_units(resume: ParsedResume) -> list[tuple[str, int, dict[str, Any]]]:
             text = unit["text"]
             words = text.split()
             unit["eligible"] = (
-                unit["eligible"]
-                or (len(words) >= 4 and not _is_header(text, section=sec))
-            ) and not _is_header(text, section=sec)
+                sec not in _LIST_SECTIONS
+                and (unit["eligible"] or len(words) >= 4)
+                and not _is_header(text, section=sec)
+                and not _looks_like_list(text)
+            )
             jobs.append((sec, i, unit))
 
     return jobs
@@ -844,13 +862,21 @@ def analyse(
 
     jobs = _plan_units(resume)
 
+    # quantified, action-led and clean already: a rewrite has nothing to add
+    strong: dict[str, dict] = {}
+    for _sec, _i, unit in jobs:
+        if unit["eligible"] and not _REWRITE_STRONG_BULLETS:
+            signals = bullet_signals(unit["text"])
+            if is_strong(signals):
+                strong[unit["id"]] = signals
+
     emit("planned", bullets=len(jobs))
 
     t_retrieval = time.perf_counter()
     fw_cache_local: dict[str, list] = {}
     for sec, i, unit in jobs:
         text = unit["text"]
-        if unit["eligible"]:
+        if unit["eligible"] and unit["id"] not in strong:
             if text not in fw_cache_local:
                 fw_cache_local[text] = query_fw(text, n_results=2)
     t_retrieval = time.perf_counter() - t_retrieval
@@ -885,10 +911,19 @@ def analyse(
         rw["highlight_text"] = text
         return rw
 
+    def _strong_rw(sec, unit):
+        rw = _label_rw(sec, unit)
+        rw["reasoning"] = "Already strong: it has a figure, opens with an action verb and reads cleanly."
+        rw["strong"] = True
+        rw["signals"] = strong[unit["id"]]
+        return rw
+
     results_by_sec: dict[str, list[tuple[int, dict]]] = {}
     eligible_jobs: list[tuple[str, int, dict]] = []
     for sec, i, unit in jobs:
-        if unit["eligible"]:
+        if unit["id"] in strong:
+            results_by_sec.setdefault(sec, []).append((i, _strong_rw(sec, unit)))
+        elif unit["eligible"]:
             eligible_jobs.append((sec, i, unit))
         else:
             results_by_sec.setdefault(sec, []).append((i, _label_rw(sec, unit)))
@@ -992,6 +1027,7 @@ def analyse(
         },
         "critic":              critic_counts,
         "claim_guard":         guard_counts,
+        "already_strong":      len(strong),
         "prompt_versions":     prompt_versions(),
         "prompt_set_version":  prompt_set_version(),
     }
