@@ -68,8 +68,10 @@ router.get("/dashboard", requireAuth, requireRole("mentor"), (req, res) => {
         "SELECT id, session_code, active, created_at FROM review_sessions WHERE mentor_id = ? ORDER BY created_at DESC"
     ).all(req.user.id)
 
+    // closing a session ends the mentor's access to its candidates, so only
+    // active sessions feed the candidate list
     const candidates = {}
-    for (const sess of sessions) {
+    for (const sess of sessions.filter(sess => sess.active)) {
         const parts = db.prepare(
             "SELECT u.id, u.username, u.display_name FROM users u JOIN session_participants sp ON sp.user_id = u.id WHERE sp.session_id = ? AND u.role = 'candidate'"
         ).all(sess.id)
@@ -174,7 +176,7 @@ router.get("/session/:code/participants", requireAuth, requireRole("mentor"), (r
 // every analysis + revision snapshot for one candidate
 router.get("/candidates/:candidateId/history", requireAuth, requireRole("mentor"), (req, res) => {
     const candidateId = parseInt(req.params.candidateId)
-    if (!mentorSession(req.user.id, candidateId, { activeOnly: false })) {
+    if (!mentorSession(req.user.id, candidateId)) {
         return res.status(404).json({ error: "Candidate not found in your review sessions." })
     }
     const db = getDb()
@@ -211,7 +213,7 @@ router.get("/candidates/:candidateId/history", requireAuth, requireRole("mentor"
 // full analysis detail, same shape the candidate sees
 router.get("/candidates/:candidateId/analyses/:analysisId", requireAuth, requireRole("mentor"), (req, res) => {
     const candidateId = parseInt(req.params.candidateId)
-    if (!mentorSession(req.user.id, candidateId, { activeOnly: false })) {
+    if (!mentorSession(req.user.id, candidateId)) {
         return res.status(404).json({ error: "Candidate not found in your review sessions." })
     }
     const db = getDb()
@@ -228,7 +230,7 @@ router.get("/candidates/:candidateId/analyses/:analysisId", requireAuth, require
 // the original upload, highlighted the same way the candidate's own view does
 router.get("/candidates/:candidateId/resumes/:resumeId/file", requireAuth, requireRole("mentor"), (req, res) => {
     const candidateId = parseInt(req.params.candidateId)
-    if (!mentorSession(req.user.id, candidateId, { activeOnly: false })) {
+    if (!mentorSession(req.user.id, candidateId)) {
         return res.status(404).json({ error: "Candidate not found in your review sessions." })
     }
     const db = getDb()
@@ -244,7 +246,7 @@ router.get("/candidates/:candidateId/resumes/:resumeId/file", requireAuth, requi
 // what the candidate actually generated, falling back to plain markdown if there's no cv
 router.get("/candidates/:candidateId/analyses/:analysisId/preview", requireAuth, requireRole("mentor"), (req, res) => {
     const candidateId = parseInt(req.params.candidateId)
-    if (!mentorSession(req.user.id, candidateId, { activeOnly: false })) {
+    if (!mentorSession(req.user.id, candidateId)) {
         return res.status(404).json({ error: "Candidate not found in your review sessions." })
     }
     const db = getDb()
@@ -268,7 +270,7 @@ router.get("/candidates/:candidateId/analyses/:analysisId/preview", requireAuth,
 // like /preview but for a cover letter and use current saved version, not the first draft
 router.get("/candidates/:candidateId/analyses/:analysisId/cover-letter", requireAuth, requireRole("mentor"), (req, res) => {
     const candidateId = parseInt(req.params.candidateId)
-    if (!mentorSession(req.user.id, candidateId, { activeOnly: false })) {
+    if (!mentorSession(req.user.id, candidateId)) {
         return res.status(404).json({ error: "Candidate not found in your review sessions." })
     }
     const db = getDb()
@@ -286,7 +288,7 @@ router.get("/candidates/:candidateId/analyses/:analysisId/cover-letter", require
 // cover letter compare, same company only
 router.get("/candidates/:candidateId/cover-letter-diff", requireAuth, requireRole("mentor"), (req, res) => {
     const candidateId = parseInt(req.params.candidateId)
-    if (!mentorSession(req.user.id, candidateId, { activeOnly: false })) {
+    if (!mentorSession(req.user.id, candidateId)) {
         return res.status(404).json({ error: "Candidate not found in your review sessions." })
     }
     const db = getDb()
@@ -318,7 +320,7 @@ router.get("/candidates/:candidateId/cover-letter-diff", requireAuth, requireRol
 // per-section diff between two analyses of the same candidate
 router.get("/candidates/:candidateId/diff", requireAuth, requireRole("mentor"), (req, res) => {
     const candidateId = parseInt(req.params.candidateId)
-    if (!mentorSession(req.user.id, candidateId, { activeOnly: false })) {
+    if (!mentorSession(req.user.id, candidateId)) {
         return res.status(404).json({ error: "Candidate not found in your review sessions." })
     }
     const db = getDb()
@@ -345,7 +347,7 @@ router.get("/candidates/:candidateId/diff", requireAuth, requireRole("mentor"), 
 // mentor-only, candidates just get their latest via /generate/latest
 router.get("/candidates/:candidateId/cover-letters", requireAuth, requireRole("mentor"), (req, res) => {
     const candidateId = parseInt(req.params.candidateId)
-    if (!mentorSession(req.user.id, candidateId, { activeOnly: false })) {
+    if (!mentorSession(req.user.id, candidateId)) {
         return res.status(404).json({ error: "Candidate not found in your review sessions." })
     }
     const db = getDb()
@@ -509,7 +511,7 @@ router.post("/feedback/:id/status", requireAuth, (req, res) => {
 
 router.get("/report", requireAuth, requireRole("mentor"), (req, res) => {
     const db = getDb()
-    const sessions = db.prepare("SELECT id FROM review_sessions WHERE mentor_id = ?").all(req.user.id)
+    const sessions = db.prepare("SELECT id FROM review_sessions WHERE mentor_id = ? AND active = 1").all(req.user.id)
 
     const candidates = {}
     for (const sess of sessions) {

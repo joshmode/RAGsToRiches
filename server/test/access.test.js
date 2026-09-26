@@ -105,3 +105,28 @@ describe("without a session", () => {
         assert.equal(res.status, 401)
     })
 })
+
+describe("closing a session", () => {
+    test("ends the mentor's access to its candidates", async () => {
+        const carol = await signUp(app.base, "carol")
+        const attempt = await seedAnalysis(carol.user)
+        const session = await mentor.post("/mentor/session")
+        await carol.post("/mentor/session/join", { code: session.data.code })
+        const reads = [
+            `/analysis/${attempt.analysisId}`,
+            `/mentor/candidates/${carol.user.id}/history`,
+            `/mentor/candidates/${carol.user.id}/analyses/${attempt.analysisId}`,
+            `/mentor/candidates/${carol.user.id}/analyses/${attempt.analysisId}/preview`,
+            `/mentor/candidates/${carol.user.id}/cover-letters`,
+        ]
+        for (const path of reads) assert.equal((await mentor.get(path)).status, 200, path)
+
+        await mentor.post(`/mentor/session/${session.data.code}/close`)
+
+        for (const path of reads) assert.equal((await mentor.get(path)).status, 404, path)
+        const dashboard = await mentor.get("/mentor/dashboard")
+        assert.ok(!dashboard.data.candidates.some(c => c.id === carol.user.id))
+        const report = await mentor.get("/mentor/report")
+        assert.ok(!report.data.report.includes("@carol"))
+    })
+})

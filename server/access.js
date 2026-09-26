@@ -24,14 +24,14 @@ export function canAccess(analysisId, user) {
     `).get(analysisId, user.id)
 }
 
-// trust is session membership, only your own candidates
-export function mentorSession(mentorId, candidateId, { activeOnly = true } = {}) {
+// trust is session membership, only your own candidates, and only while the session is open
+export function mentorSession(mentorId, candidateId) {
     return getDb().prepare(`
         SELECT rs.id, rs.session_code, rs.active
         FROM review_sessions rs
         JOIN session_participants sp ON sp.session_id = rs.id
-        WHERE rs.mentor_id = ? AND sp.user_id = ? ${activeOnly ? "AND rs.active = 1" : ""}
-        ORDER BY rs.active DESC, rs.created_at DESC
+        WHERE rs.mentor_id = ? AND sp.user_id = ? AND rs.active = 1
+        ORDER BY rs.created_at DESC
         LIMIT 1
     `).get(mentorId, candidateId)
 }
