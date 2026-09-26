@@ -183,15 +183,20 @@ def _run_critic(
                 sev = "yellow"
             result["severity"] = sev
             if _has_new_claims(bullet, result.get("rewritten", bullet)):
-                result["rewritten"] = rewritten
+                # two passes and it still invents a figure, so fall back to the
+                # candidate's own bullet rather than offer a claim nobody can ground
+                result["rewritten"] = bullet
+                result["reasoning"] = "Withheld: every rewrite of this bullet added figures the original doesn't support."
                 result["critic"] = {"status": "failed", "reason": "Corrected rewrite still introduced a new claim."}
             else:
                 result["critic"] = {"status": "repaired", "reason": critic_raw.strip()}
         else:
             result["critic"] = {"status": "passed", "reason": critic_raw.strip()}
     except Exception as critic_err:
+        # the rewrite stands, but _finalise still flags the figure so the
+        # candidate is told it was never checked
         print(f"critic isolated failure, keeping pre-critic result: {critic_err}")
-        result["critic"] = {"status": "failed", "reason": str(critic_err)}
+        result["critic"] = {"status": "unavailable", "reason": "The critic couldn't be reached, so this figure wasn't checked."}
 
     return result
 
@@ -343,20 +348,28 @@ def _normalise_severity(result: dict) -> dict:
 def _finalise(result: dict, original: str) -> dict:
     """Stamp the source bullet on a rewrite and attach deterministic findings.
 
-    A role escalation ("helped with X" rewritten as "led X") is surfaced rather
-    than reverted. The rest of the rewrite is usually fine, and the candidate
+    Both checks are free, so they run on every rewrite whether or not the
+    critic is switched on. A role escalation ("helped with X" rewritten as
+    "led X") or a figure the original never stated is surfaced rather than
+    reverted. The rest of the rewrite is usually fine, and the candidate
     already accepts or rejects each suggestion individually — so the honest move
     is to tell them what the model changed and let them decide, not to silently
-    discard work. It is excluded from the action-verb score either way, so the
-    rubric can never reward an escalation.
+    discard work. The score only reads the original bullet, so neither can
+    ever be rewarded.
     """
     result["original"] = original
     _normalise_severity(result)
-    escalation = verb_escalation(original, result.get("rewritten") or original)
+    rewritten = result.get("rewritten") or original
+    escalation = verb_escalation(original, rewritten)
     if escalation:
         result["verb_escalation"] = escalation
     else:
         result.pop("verb_escalation", None)
+    new_claims = sorted(new_quantitative_claims(original, rewritten))
+    if new_claims:
+        result["new_claims"] = new_claims
+    else:
+        result.pop("new_claims", None)
     return result
 
 
@@ -863,7 +876,7 @@ def analyse(
     freqs = kw_freqs(jd_kws, resume.raw_text)
     t_total = time.perf_counter() - t_start
     critic_counts: dict[str, int] = {}
-    guard_counts = {"verb_escalation": 0, "overstated": 0}
+    guard_counts = {"verb_escalation": 0, "overstated": 0, "new_claims": 0, "withheld": 0}
     for section in rewrites.values():
         for item in section:
             status = item.get("critic", {}).get("status")
@@ -873,6 +886,11 @@ def analyse(
                 guard_counts["verb_escalation"] += 1
             if item.get("overstated"):
                 guard_counts["overstated"] += 1
+            # a figure the critic checked and passed isn't an open question
+            if item.get("new_claims") and status != "passed":
+                guard_counts["new_claims"] += 1
+            if status == "failed" and item.get("rewritten") == item.get("original"):
+                guard_counts["withheld"] += 1
 
     emit("scored", score=score.get("total", 0))
 

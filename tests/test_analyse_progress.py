@@ -110,6 +110,6 @@ def test_a_broken_consumer_does_not_break_the_analysis(offline):
 
 def test_guard_summary_is_reported(offline):
     result = analyser.analyse(resume=_resume(), job_description="", provider="gemini")
-    assert set(result["claim_guard"]) == {"verb_escalation", "overstated"}
+    assert set(result["claim_guard"]) == {"verb_escalation", "overstated", "new_claims", "withheld"}
     assert "prompt_versions" in result
     assert "prompt_set_version" in result

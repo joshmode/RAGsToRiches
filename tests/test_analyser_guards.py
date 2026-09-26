@@ -38,6 +38,29 @@ def test_finalise_attaches_an_escalation_finding():
 def test_finalise_leaves_no_key_when_the_rewrite_is_honest():
     item = _graded("Built the API", "Developed the API gateway")
     assert "verb_escalation" not in item
+    assert "new_claims" not in item
+
+
+def test_finalise_flags_an_invented_figure_without_the_critic():
+    # the regex check is free, so it runs whether or not the critic toggle is on
+    item = _graded("Worked on checkout", "Improved checkout conversion by 40%")
+    assert item["new_claims"] == ["40%"]
+
+
+def test_finalise_leaves_a_placeholder_alone():
+    item = _graded("Worked on checkout", "Improved checkout conversion by [X%]")
+    assert "new_claims" not in item
+
+
+def test_chunked_rewrites_carry_the_figure_check(monkeypatch):
+    monkeypatch.setattr(
+        analyser, "llm_call",
+        lambda *a, **k: '[{"rewritten": "Cut costs by 30%", "framework_used": "STAR", "severity": "red"},'
+                        ' {"rewritten": "Shipped the API", "framework_used": "STAR", "severity": "red"}]',
+    )
+    out = analyser.rewrite_chunk([("Cut costs", []), ("Shipped the API", [])], [], "gemini", "")
+    assert out[0]["new_claims"] == ["30%"]
+    assert "new_claims" not in out[1]
 
 
 def test_finalise_clears_a_stale_finding():
@@ -125,8 +148,9 @@ def test_critic_passes_a_supported_figure(monkeypatch):
     assert result["critic"]["status"] == "passed"
 
 
-def test_repair_that_still_invents_reverts_to_the_pre_critic_text(monkeypatch):
-    # critic FAILs, then the repair invents a different figure -> revert, fail closed.
+def test_repair_that_still_invents_falls_back_to_the_original(monkeypatch):
+    # critic FAILs, then the repair invents a different figure -> the candidate's
+    # own bullet stands, fail closed.
     replies = iter([
         "FAIL: 40% is not in the original",
         '{"rewritten": "Improved checkout conversion by 25%", "severity": "yellow"}',
@@ -138,7 +162,8 @@ def test_repair_that_still_invents_reverts_to_the_pre_critic_text(monkeypatch):
         "usr", "sys", "gemini", "", "",
     )
     assert result["critic"]["status"] == "failed"
-    assert result["rewritten"] == pre_critic
+    assert result["rewritten"] == "Worked on checkout"
+    assert "new_claims" not in analyser._finalise(result, "Worked on checkout")
 
 
 def test_clean_repair_is_accepted(monkeypatch):
@@ -156,7 +181,7 @@ def test_clean_repair_is_accepted(monkeypatch):
     assert "[X%]" in result["rewritten"]
 
 
-def test_critic_failure_keeps_the_pre_critic_result(monkeypatch):
+def test_unreachable_critic_keeps_the_rewrite_flagged(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("provider down")
     monkeypatch.setattr(analyser, "llm_call", boom)
@@ -165,8 +190,11 @@ def test_critic_failure_keeps_the_pre_critic_result(monkeypatch):
         "Worked on checkout", pre_critic, {"rewritten": pre_critic},
         "usr", "sys", "gemini", "", "",
     )
-    assert result["critic"]["status"] == "failed"
+    assert result["critic"]["status"] == "unavailable"
+    assert "provider down" not in result["critic"]["reason"]
     assert result["rewritten"] == pre_critic
+    # unchecked, so the figure is still flagged for the candidate
+    assert analyser._finalise(result, "Worked on checkout")["new_claims"] == ["40%"]
 
 
 # ---------------------------------------------------------- qualitative critic
