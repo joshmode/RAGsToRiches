@@ -1,5 +1,5 @@
 import app from "./app.js"
-import { getDb } from "./db.js"
+import { getDb, sweepGuests } from "./db.js"
 import { recoverJobs } from "./routes/analysis.js"
 
 const PORT = process.env.API_PORT || 3000
@@ -10,6 +10,12 @@ process.on("unhandledRejection", (err) => {
 })
 
 getDb()
+
+// guests are told their data goes within a day, so don't wait for the next guest
+// sign-up to sweep
+sweepGuests(getDb())
+setInterval(() => sweepGuests(getDb()), 15 * 60 * 1000).unref()
+
 const resumed = recoverJobs(app.locals.engineUrl)
 if (resumed) console.log(`resumed ${resumed} analysis job(s) interrupted by the last restart`)
 
