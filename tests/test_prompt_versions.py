@@ -21,6 +21,7 @@ import pytest
 
 
 PINNED = {
+    "batch_index_rule": "bbb53c0369bd",
     "numeric_critic": "e39ae81a05f6",
     "qualitative_system": "a266313b9846",
     "result_schema": "83a5e99a5993",
@@ -28,7 +29,7 @@ PINNED = {
     "severity_guide": "3f6d2410f55e",
 }
 
-PINNED_SET_VERSION = "0a15ad4b7351"
+PINNED_SET_VERSION = "7b24969a326e"
 
 
 def test_every_pipeline_prompt_is_registered():

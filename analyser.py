@@ -322,6 +322,11 @@ _SEVERITY_GUIDE = register("severity_guide", (
     "green = already strong; only minor polish applied."
 ))
 
+_BATCH_INDEX_RULE = register("batch_index_rule", (
+    'Every object must also include "index": the number shown in brackets before '
+    "the bullet it rewrites."
+))
+
 
 def _build_rewrite_prompts(bullet: str, frameworks: list[Any], missing_kws: list[str]) -> tuple[str, str]:
     fw_ctx = "\n\n".join(f.document for f in frameworks)
@@ -410,6 +415,78 @@ def rewrite_item(
         }
 
 
+_ALIGN_WORD_RE = re.compile(r'[a-z0-9][a-z0-9+#.]*')
+_ALIGN_STOPWORDS = {
+    "the", "and", "for", "with", "that", "this", "from", "into", "using", "used",
+    "was", "were", "our", "their", "its", "across", "over", "per",
+}
+
+
+def _content_words(text: str) -> set[str]:
+    return {w for w in _ALIGN_WORD_RE.findall((text or "").lower()) if len(w) >= 3 and w not in _ALIGN_STOPWORDS}
+
+
+def _align_batch(originals: list[str], parsed: Any) -> list[dict]:
+    """Put a batch response back in bullet order, or raise if it can't be trusted.
+
+    Matching by position alone put a swapped answer on the wrong bullet. The model
+    echoes each bullet's index, and a rewrite that shares more of another bullet's
+    words than its own is treated as misplaced whatever index it came back with.
+    """
+    count = len(originals)
+    if not isinstance(parsed, list) or len(parsed) != count:
+        got = len(parsed) if isinstance(parsed, list) else type(parsed).__name__
+        raise ValueError(f"expected {count} rewrites in response, got {got}")
+    if not all(isinstance(item, dict) for item in parsed):
+        raise ValueError("chunk response item was not a JSON object")
+
+    indexes: list[int | None] = []
+    for item in parsed:
+        try:
+            indexes.append(int(item["index"]))
+        except (KeyError, TypeError, ValueError):
+            indexes.append(None)
+
+    if all(index is None for index in indexes):
+        ordered = list(parsed)
+    elif None in indexes:
+        raise ValueError("some rewrites in the batch came back without an index")
+    else:
+        # some models count from 1 however the bullets are numbered
+        if sorted(indexes) == list(range(1, count + 1)):
+            indexes = [index - 1 for index in indexes]
+        if sorted(indexes) != list(range(count)):
+            raise ValueError(f"batch indexes {indexes} don't cover bullets 0..{count - 1}")
+        ordered = [item for _index, item in sorted(zip(indexes, parsed), key=lambda pair: pair[0])]
+
+    words = [_content_words(text) for text in originals]
+    for i, item in enumerate(ordered):
+        rewritten = _content_words(str(item.get("rewritten", "")))
+        own = len(rewritten & words[i]) / max(1, len(words[i]))
+        for j, other in enumerate(words):
+            if j != i and len(rewritten & other) / max(1, len(other)) > max(own, 0.3):
+                raise ValueError(f"rewrite {i} reads like bullet {j}")
+    return ordered
+
+
+def _rewrite_each(
+    items: list[tuple[str, list[Any]]],
+    missing_kws: list[str],
+    provider: str,
+    local_endpoint: str,
+    use_critic: bool,
+    model: str,
+    api_key: str,
+) -> list[dict]:
+    """One call per bullet, side by side. The provider semaphore still caps them."""
+    with ThreadPoolExecutor(max_workers=min(4, len(items))) as pool:
+        futures = [
+            pool.submit(rewrite_item, text, fws, missing_kws, provider, local_endpoint, use_critic, model=model, api_key=api_key)
+            for text, fws in items
+        ]
+        return [future.result() for future in futures]
+
+
 def rewrite_chunk(
     items: list[tuple[str, list[Any]]],
     missing_kws: list[str],
@@ -442,6 +519,7 @@ def rewrite_chunk(
         f"Rewrite EVERY one, keep the same order, do not merge or skip any:\n{bullets_block}\n\n"
         f"Respond with ONLY a JSON array of exactly {len(items)} objects, one per bullet "
         f"in the same order as the input, each with this exact structure:\n{_RESULT_SCHEMA}\n"
+        f"{_BATCH_INDEX_RULE}\n"
         f"{_SEVERITY_GUIDE}"
     )
 
@@ -449,23 +527,16 @@ def rewrite_chunk(
         raw = llm_call(user_prompt=usr_prompt, system_prompt=_REWRITE_SYS_PROMPT,
                        provider=provider, local_endpoint=local_endpoint,
                        model=model, max_tokens=min(8192, 500 * len(items)), api_key=api_key)
-        parsed = _parse_json(raw)
-        if not isinstance(parsed, list) or len(parsed) != len(items):
-            got = len(parsed) if isinstance(parsed, list) else type(parsed).__name__
-            raise ValueError(f"expected {len(items)} rewrites in response, got {got}")
-
+        ordered = _align_batch([text for text, _fws in items], _parse_json(raw))
         results = []
-        for (text, _fws), item_result in zip(items, parsed):
-            if not isinstance(item_result, dict):
-                raise ValueError("chunk response item was not a JSON object")
-            results.append(_finalise(dict(item_result), text))
+        for (text, _fws), item_result in zip(items, ordered):
+            item_result = dict(item_result)
+            item_result.pop("index", None)
+            results.append(_finalise(item_result, text))
 
     except Exception as e:
         print(f"chunk rewrite failed ({len(items)} bullets), falling back to per-bullet calls: {e}")
-        return [
-            rewrite_item(text, fws, missing_kws, provider, local_endpoint, use_critic, model=model, api_key=api_key)
-            for text, fws in items
-        ]
+        return _rewrite_each(items, missing_kws, provider, local_endpoint, use_critic, model, api_key)
 
     if use_critic:
         for i, (text, fws) in enumerate(items):
