@@ -27,7 +27,7 @@ _load_env()
 
 from parser import parse_file, ParsedResume
 from analyser import analyse, gen_cv, gen_cover_letter
-from router import _is_key_placeholder
+from router import _is_key_placeholder, resolve_model
 from document_export import generate_docx, generate_pdf
 from pdf_highlight import highlight_pdf
 import job_scraper
@@ -223,7 +223,7 @@ def gen_cover_letter_endpoint():
     api_key = data.get("api_key", "")
 
     cl_text = gen_cover_letter(resume, jd, provider, local_endpoint, model=model, api_key=api_key)
-    return jsonify({"cover_letter_text": cl_text})
+    return jsonify({"cover_letter_text": cl_text, "model": resolve_model(provider, model)})
 
 
 @app.route("/export-docx", methods=["POST"])

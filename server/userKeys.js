@@ -77,10 +77,16 @@ class ProviderError extends Error {
     }
 }
 
+// the free tier runs on openrouter unless DEFAULT_PROVIDER=groq. a fast
+// non-reasoning model there is worth benchmarking against the openrouter default
+export function pooledProvider() {
+    return process.env.DEFAULT_PROVIDER === "groq" ? "groq" : "openrouter"
+}
+
 // ui provider choice what the engine needs incl the user's own byok key
 export function resolveProvider(userId, choice) {
     if (choice === "default") {
-        return { engineProvider: "openrouter", apiKey: "" } // pooled key
+        return { engineProvider: pooledProvider(), apiKey: "" } // pooled key
     }
     if (choice === "local") {
         return { engineProvider: "local", apiKey: "" }

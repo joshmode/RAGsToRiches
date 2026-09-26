@@ -15,7 +15,10 @@ from llm_output import parse_json as _parse_json
 from prompt_registry import prompt_set_version, prompt_versions, register
 from vector_db import query_fw
 from parser import ParsedResume
-from router import DeadlineExceeded, deadline, llm_call, submit, time_left
+from router import (
+    DeadlineExceeded, deadline, default_critic_model, llm_call, record_models, resolve_model,
+    submit, time_left,
+)
 from scoring import action_verb_strength, bullet_signals, is_strong, score_bullets
 
 load_dotenv()
@@ -48,6 +51,8 @@ def _critic_creds(provider: str, model: str, api_key: str, local_endpoint: str) 
     elif os.environ.get("CRITIC_MODEL"):
         # same provider/key as the main request
         model = os.environ["CRITIC_MODEL"]
+    elif default_critic_model(provider):
+        model = default_critic_model(provider)
     return provider, model, api_key, local_endpoint
 
 
@@ -96,7 +101,7 @@ def _run_critic(
         critic_raw = llm_call(
             user_prompt=critic_prompt, provider=provider,
             local_endpoint=local_endpoint, model=model,
-            max_tokens=100, timeout=30, max_retries=1, api_key=api_key,
+            max_tokens=1024, timeout=30, max_retries=1, api_key=api_key,
         )
 
         if critic_raw.strip().upper().startswith("FAIL"):
@@ -782,8 +787,11 @@ def analyse(
     Every model call inside runs against one deadline (ANALYSIS_DEADLINE_SECONDS),
     so retries and fallbacks can't stack past what the client waits for.
     """
-    with deadline(_ANALYSIS_DEADLINE_SECONDS):
-        return _run_analysis(resume, job_description, provider, local_endpoint, use_critic, model, api_key, progress)
+    with deadline(_ANALYSIS_DEADLINE_SECONDS), record_models() as used:
+        result = _run_analysis(resume, job_description, provider, local_endpoint, use_critic, model, api_key, progress)
+    # what answered, not just what was asked for: a fallback model is named too
+    result["model"] = ", ".join(sorted(used)) or resolve_model(provider, model)
+    return result
 
 
 def _run_analysis(

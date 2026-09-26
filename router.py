@@ -34,7 +34,7 @@ _PROVIDER_LOCKS = {
 # env-overridable since exact model IDs drift, check these against current provider docs
 _DEFAULT_MODELS = {
     "gemini":     os.environ.get("GEMINI_DEFAULT_MODEL", "gemini-3.5-flash"),
-    "claude":     os.environ.get("CLAUDE_DEFAULT_MODEL", "claude-4-5-sonnet-latest"),
+    "claude":     os.environ.get("CLAUDE_DEFAULT_MODEL", "claude-sonnet-5"),
     "chatgpt":    os.environ.get("OPENAI_DEFAULT_MODEL", "gpt-4o"),
     "openrouter": os.environ.get("OPENROUTER_DEFAULT_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free"),
     "groq":       os.environ.get("GROQ_DEFAULT_MODEL", "qwen/qwen3.6-27b"),
@@ -45,6 +45,41 @@ _DEFAULT_MODELS = {
 _FALLBACK_MODELS = {
     "openrouter": os.environ.get("OPENROUTER_FALLBACK_MODEL", "openrouter/free"),
 }
+
+# the critic answers PASS or FAIL, a smaller model does that fine for a fraction of the cost
+_CRITIC_MODELS = {
+    "claude": os.environ.get("CLAUDE_CRITIC_MODEL", "claude-haiku-4-5"),
+}
+
+
+def resolve_model(provider: str, model: str = "") -> str:
+    return model or _DEFAULT_MODELS.get(provider.lower(), "")
+
+
+def default_critic_model(provider: str) -> str:
+    """"" means the critic runs on the main model."""
+    return _CRITIC_MODELS.get(provider.lower(), "")
+
+
+# the models that actually answered during an analysis, fallbacks included, so a
+# stored result can say what produced it
+_models_used: contextvars.ContextVar[set | None] = contextvars.ContextVar("llm_models_used", default=None)
+
+
+@contextmanager
+def record_models():
+    used: set[str] = set()
+    token = _models_used.set(used)
+    try:
+        yield used
+    finally:
+        _models_used.reset(token)
+
+
+def _note_model(model: str) -> None:
+    used = _models_used.get()
+    if used is not None:
+        used.add(model)
 
 
 # One analysis gets one time budget. The SDKs retry on their own, the loop below
@@ -148,8 +183,10 @@ def llm_call(
 
     resolved_model = model or _DEFAULT_MODELS[provider]
     try:
-        return _dispatch(provider, user_prompt, system_prompt, resolved_model,
-                          max_tokens, local_endpoint, max_retries, timeout, api_key)
+        answer = _dispatch(provider, user_prompt, system_prompt, resolved_model,
+                           max_tokens, local_endpoint, max_retries, timeout, api_key)
+        _note_model(resolved_model)
+        return answer
     except Exception as primary_err:
         fallback_model = _FALLBACK_MODELS.get(provider, "")
         if not fallback_model or fallback_model == resolved_model:
@@ -159,8 +196,10 @@ def llm_call(
             raise
         print(f"{provider} call failed on '{resolved_model}' after {max_retries} attempt(s), "
               f"falling back to '{fallback_model}': {primary_err}")
-        return _dispatch(provider, user_prompt, system_prompt, fallback_model,
-                          max_tokens, local_endpoint, max_retries, timeout, api_key)
+        answer = _dispatch(provider, user_prompt, system_prompt, fallback_model,
+                           max_tokens, local_endpoint, max_retries, timeout, api_key)
+        _note_model(fallback_model)
+        return answer
 
 
 def _dispatch(
@@ -230,8 +269,10 @@ def _dispatch(
                         system=system_prompt,
                         messages=[{"role": "user", "content": user_prompt}]
                     )
-                    if msg.content[0].text is None: raise EmptyResponseError("Claude returned no content.")
-                    return msg.content[0].text
+                    # models that think first put a thinking block ahead of the answer
+                    text = "".join(block.text for block in msg.content if getattr(block, "type", "") == "text")
+                    if not text: raise EmptyResponseError("Claude returned no content.")
+                    return text
 
                 elif provider == "chatgpt":
                     import openai

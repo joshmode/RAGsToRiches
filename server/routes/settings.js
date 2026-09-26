@@ -1,7 +1,7 @@
 import { Router } from "express"
 import fetch from "node-fetch"
 import { requireAuth } from "../middleware/auth.js"
-import { BYOK_PROVIDERS, saveKey, deleteKey, hasKey } from "../userKeys.js"
+import { BYOK_PROVIDERS, saveKey, deleteKey, hasKey, pooledProvider } from "../userKeys.js"
 
 const router = Router()
 
@@ -16,7 +16,7 @@ router.get("/env-status", requireAuth, async (req, res) => {
     const engineUrl = req.app.locals.engineUrl
     try {
         const engine = await (await fetch(`${engineUrl}/env-status`)).json()
-        status.default = !!engine.openrouter
+        status.default = !!engine[pooledProvider()]
         status.linkedin = !!engine.linkedin
     } catch {
         status.default = false

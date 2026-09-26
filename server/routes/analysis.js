@@ -108,7 +108,7 @@ async function run(engineUrl, jobId, payload) {
             "INSERT INTO analyses (resume_id, user_id, results_json, job_description, provider, model, score_total, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
         ).run(
             payload.resume_id, payload.user_id, JSON.stringify(results), payload.job_description || "",
-            payload.provider || "", "", score, hash,
+            payload.provider || "", results.model || "", score, hash,
         )
         results.analysis_id = row.lastInsertRowid
         results.resume_id = payload.resume_id
@@ -324,7 +324,7 @@ router.post("/quick-cover-letter", requireAuth, llmLimiter, async (req, res) => 
         }
         const row = db.prepare(
             "INSERT INTO analyses (resume_id, user_id, results_json, job_description, provider, model, score_total, content_hash, attempt_type, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, '', 'cover_letter_only', datetime('now'))"
-        ).run(resumeId, req.user.id, JSON.stringify(stored), job_description || "", provider || "", "")
+        ).run(resumeId, req.user.id, JSON.stringify(stored), job_description || "", provider || "", data.model || "")
         const analysisId = row.lastInsertRowid
         stored.analysis_id = analysisId
         stored.resume_id = resumeId
