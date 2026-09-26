@@ -627,28 +627,78 @@ router.get("/:id", requireAuth, (req, res) => {
     res.json({ id: row.id, resume_id: row.resume_id, score: row.score_total, provider: row.provider, model: row.model, attempt_type: row.attempt_type || "resume_analysis", created_at: row.created_at, results })
 })
 
+function currentDecisions(db, analysisId) {
+    const decisions = {}
+    for (const r of db.prepare("SELECT suggestion_key, decision FROM rewrite_decisions WHERE analysis_id = ?").all(analysisId)) {
+        decisions[r.suggestion_key] = r.decision === 1
+    }
+    return decisions
+}
+
+// one snapshot per stretch of reviewing, not one per keypress. a decision within
+// five minutes of the last snapshot updates it instead of adding another row
+function snapshot(db, analysis, decisions) {
+    const latest = db.prepare(`
+        SELECT id, created_at >= datetime('now', '-5 minutes') AS recent
+        FROM revision_snapshots WHERE analysis_id = ? ORDER BY created_at DESC, id DESC LIMIT 1
+    `).get(analysis.id)
+    if (latest?.recent) {
+        db.prepare("UPDATE revision_snapshots SET decisions_json = ?, score_total = ? WHERE id = ?")
+            .run(JSON.stringify(decisions), analysis.score_total, latest.id)
+    } else {
+        db.prepare(
+            "INSERT INTO revision_snapshots (resume_id, analysis_id, decisions_json, score_total, created_at) VALUES (?, ?, ?, ?, datetime('now'))"
+        ).run(analysis.resume_id, analysis.id, JSON.stringify(decisions), analysis.score_total)
+    }
+}
+
+// every decision at once, for accept all and clear
 router.post("/:id/decisions", requireAuth, (req, res) => {
     const { decisions } = req.body
     const analysisId = parseInt(req.params.id)
-    if (!getAnalysis(analysisId, req.user.id)) {
+    const analysis = getAnalysis(analysisId, req.user.id)
+    if (!analysis) {
         return res.status(404).json({ error: "Analysis not found." })
     }
     const db = getDb()
-
-    db.prepare("DELETE FROM rewrite_decisions WHERE analysis_id = ?").run(analysisId)
-
     const stmt = db.prepare(
         "INSERT INTO rewrite_decisions (analysis_id, suggestion_key, decision, created_at) VALUES (?, ?, ?, datetime('now'))"
     )
     db.transaction((items) => {
+        db.prepare("DELETE FROM rewrite_decisions WHERE analysis_id = ?").run(analysisId)
         for (const [key, val] of Object.entries(items)) {
             stmt.run(analysisId, key, val ? 1 : 0)
         }
-    })(decisions || {})
+        snapshot(db, analysis, currentDecisions(db, analysisId))
+    })(decisions && typeof decisions === "object" ? decisions : {})
+    res.json({ ok: true })
+})
+
+// one decision, as the candidate makes it. null takes it back
+router.put("/:id/decisions/:key", requireAuth, (req, res) => {
+    const analysisId = parseInt(req.params.id)
     const analysis = getAnalysis(analysisId, req.user.id)
-    db.prepare(
-        "INSERT INTO revision_snapshots (resume_id, analysis_id, decisions_json, score_total, created_at) VALUES (?, ?, ?, ?, datetime('now'))"
-    ).run(analysis.resume_id, analysisId, JSON.stringify(decisions || {}), analysis.score_total)
+    if (!analysis) {
+        return res.status(404).json({ error: "Analysis not found." })
+    }
+    const { decision } = req.body
+    if (decision !== true && decision !== false && decision !== null) {
+        return res.status(400).json({ error: "decision must be true, false or null." })
+    }
+    const key = String(req.params.key).slice(0, 200)
+    const db = getDb()
+    db.transaction(() => {
+        if (decision === null) {
+            db.prepare("DELETE FROM rewrite_decisions WHERE analysis_id = ? AND suggestion_key = ?").run(analysisId, key)
+        } else {
+            db.prepare(`
+                INSERT INTO rewrite_decisions (analysis_id, suggestion_key, decision, created_at)
+                VALUES (?, ?, ?, datetime('now'))
+                ON CONFLICT(analysis_id, suggestion_key) DO UPDATE SET decision = excluded.decision, created_at = excluded.created_at
+            `).run(analysisId, key, decision ? 1 : 0)
+        }
+        snapshot(db, analysis, currentDecisions(db, analysisId))
+    })()
     res.json({ ok: true })
 })
 
@@ -656,13 +706,7 @@ router.get("/:id/decisions", requireAuth, (req, res) => {
     if (!canAccess(req.params.id, req.user)) {
         return res.status(404).json({ error: "Analysis not found." })
     }
-    const db = getDb()
-    const rows = db.prepare("SELECT suggestion_key, decision FROM rewrite_decisions WHERE analysis_id = ?").all(req.params.id)
-    const decisions = {}
-    for (const r of rows) {
-        decisions[r.suggestion_key] = r.decision === 1
-    }
-    res.json(decisions)
+    res.json(currentDecisions(getDb(), req.params.id))
 })
 
 router.get("/:id/revisions", requireAuth, (req, res) => {

@@ -264,6 +264,18 @@ function initDb(db) {
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_generated_documents_version ON generated_documents(analysis_id, document_type, created_at)")
 
+    // one row per decision so a single accept can upsert. older databases could
+    // hold duplicates, the newest of each is the one that stood
+    const hasDecisionKey = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_rewrite_decisions_key'").get()
+    if (!hasDecisionKey) {
+        db.exec(`
+            DELETE FROM rewrite_decisions WHERE id NOT IN (
+                SELECT MAX(id) FROM rewrite_decisions GROUP BY analysis_id, suggestion_key
+            );
+            CREATE UNIQUE INDEX idx_rewrite_decisions_key ON rewrite_decisions(analysis_id, suggestion_key);
+        `)
+    }
+
     // what history lists need, kept beside results_json (see summary.js)
     cols = db.prepare("PRAGMA table_info(analyses)").all().map(c => c.name)
     const summaryCols = { company: "TEXT DEFAULT ''", match_pct: "INTEGER", score_json: "TEXT DEFAULT ''", timing_json: "TEXT DEFAULT ''" }
