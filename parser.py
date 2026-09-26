@@ -115,6 +115,8 @@ SECTION_ALIASES = {
     "extracurricular":         "INTERESTS",
     "extracurricular activities": "INTERESTS",
     "references":              "REFERENCES",
+    "references available on request":   "REFERENCES",
+    "references available upon request": "REFERENCES",
 }
 
 # remove markdown formatting issues from pdf text extracted
@@ -170,11 +172,21 @@ def _clean_header(line: str) -> str:
     return out
 
 
-# regex built from aliases
-_SECTION_RE = re.compile(
-    r'^(' + '|'.join(re.escape(k) for k in sorted(SECTION_ALIASES.keys(), key=len, reverse=True)) + r')\b.*$',
-    re.IGNORECASE,
-)
+# "Label: value" on one line. a heading's colon ends the line, this one has a value after it
+_INLINE_LABEL_RE = re.compile(r'^\s*([A-Za-z][A-Za-z &/]{1,40}?)\s*:\s*(\S.*)$')
+
+# words that can sit beside a section name in a compound heading ("Skills & Tools")
+_COMPOUND_WORDS = {
+    "tools", "frameworks", "platforms", "libraries", "databases", "training", "courses",
+    "coursework", "leadership", "affiliations", "memberships", "recognition", "extracurriculars",
+    "abilities", "expertise", "strengths", "overview", "highlights",
+}
+
+# a section word after one of these is a job title ("Head of Research"), not a heading
+_TITLE_CONNECTORS = {"of", "at", "for", "in", "with", "to", "and", "&"}
+
+# inside a role or project a "Technologies: React" line describes that entry
+_ENTRY_SECTIONS = {"EXPERIENCE", "PROJECTS", "VOLUNTEER", "PUBLICATIONS"}
 
 # single-word canonical starters
 _CANON_STARTERS = {
@@ -256,80 +268,79 @@ def _sorted_blocks(page: fitz.Page) -> list[str]:
 
 
 def _match_section(line: str) -> str | None:
+    """canonical section for a heading line, or None.
+
+    a heading is the section phrase on its own, give or take decoration, a trailing
+    colon, a qualifier ("Selected Publications") or a partner section ("Skills &
+    Interests"). "Research Assistant" and "Technologies: React" start with a section
+    word but they're content, and treating them as headings used to drop the line
+    and move a role's bullets into the wrong section."""
+    if _INLINE_LABEL_RE.match(_MD_STRIP_RE.sub('', line)):
+        return None
     cleaned = _clean_header(line)
     if not cleaned:
         return None
 
     words = cleaned.split()
+    if len(words) > 6:
+        return None
 
-    if len(words) <= 8:
-        m = _SECTION_RE.match(cleaned)
-        if m:
-            return SECTION_ALIASES[m.group(1).lower()]
-
-    lower = cleaned.lower().strip()
+    lower = ' '.join(w.lower().strip(':;.,') for w in words)
+    lower = re.sub(r'\s*\([^)]*\)$', '', lower)
+    lower = re.sub(r'\s*\d+$', '', lower).strip()
     if lower in SECTION_ALIASES:
         return SECTION_ALIASES[lower]
 
-    stripped = re.sub(r'[\s:;\-–—|]+$', '', lower).strip()
-    stripped = re.sub(r'\s*\d+\s*$', '', stripped).strip()
-    if stripped in SECTION_ALIASES:
-        return SECTION_ALIASES[stripped]
+    # every part a section word: "Skills & Interests", "Education and Training"
+    parts = [p.strip() for p in re.split(r'\s*(?:&|/|\||,|\+|\band\b)\s*', lower) if p.strip()]
+    if len(parts) > 1 and all(p in SECTION_ALIASES or p in _COMPOUND_WORDS for p in parts):
+        first = next((p for p in parts if p in SECTION_ALIASES), None)
+        if first:
+            return SECTION_ALIASES[first]
 
-    # cleanse colon that may be inside
-    colon_stripped = re.sub(r'\s*:\s*.*$', '', lower).strip()
-    if colon_stripped in SECTION_ALIASES:
-        return SECTION_ALIASES[colon_stripped]
+    stylized = cleaned.isupper() or all(
+        w[0].isupper() for w in words if w[0].isalpha() and w.lower() not in _TITLE_CONNECTORS
+    )
+    tail = lower.split()
+    if stylized and 2 <= len(tail) <= 4:
+        # the section word first: "Skills Summary", "Summary of Qualifications"
+        if tail[0] in SECTION_ALIASES and all(
+            w in SECTION_ALIASES or w in _COMPOUND_WORDS or w in _TITLE_CONNECTORS for w in tail[1:]
+        ):
+            return SECTION_ALIASES[tail[0]]
+        # a qualifier then the section word: "Selected Publications", "Industry Experience".
+        # a connector means a job title instead ("Head of Research")
+        if (len(tail) <= 3 and tail[-1] in SECTION_ALIASES
+                and not any(w in _TITLE_CONNECTORS for w in tail[:-1])):
+            return SECTION_ALIASES[tail[-1]]
 
-    if 1 <= len(words) <= 8:
-        first = words[0].lower().rstrip(':')
-        stylized = (
-            cleaned.isupper()
-            or cleaned.istitle()
-            or (len(words) <= 5 and all(w[0].isupper() for w in words if w and w[0].isalpha()))
-            or cleaned.replace(' ', '').isupper()
-        )
-        if first in _CANON_STARTERS and stylized:
-            for n in range(len(words), 0, -1):
-                cand = ' '.join(w.lower().rstrip(':') for w in words[:n])
-                if cand in SECTION_ALIASES:
-                    return SECTION_ALIASES[cand]
+    if len(words) == 1 and len(words[0]) >= 8:
+        glued = words[0].rstrip(':')
+        split = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', glued)
+        if ' ' in split:
+            return _match_section(split)
+        glued_lower = glued.lower()
+        for alias, canon in SECTION_ALIASES.items():
+            if ' ' in alias and alias.replace(' ', '') == glued_lower:
+                return canon
 
-        # Last resort: even if not stylised
-        for n in range(min(len(words), 4), 0, -1):
-            cand = ' '.join(w.lower().rstrip(':') for w in words[:n])
-            if cand in SECTION_ALIASES:
-                rest = words[n:]
-                if not rest or all(not re.search(r'[.!?]', w) for w in rest):
-                    return SECTION_ALIASES[cand]
+    return None
 
-        # try matching each word to aliase
-        for n in range(len(words), 0, -1):
-            cand = ' '.join(w.lower().strip(':.;-–—|') for w in words[:n])
-            if cand in SECTION_ALIASES:
-                return SECTION_ALIASES[cand]
 
-        if 1 <= len(words) <= 6:
-            last = words[-1].lower().rstrip(':')
-            stylized = (
-                cleaned.istitle()
-                or cleaned.isupper()
-                or all(w[0].isupper() for w in words if w and w[0].isalpha())
-            )
-            if last in SECTION_ALIASES and stylized:
-                return SECTION_ALIASES[last]
+def _inline_section(line: str, current: str) -> tuple[str, str] | None:
+    """(section, value) for a "Skills: Python, Go" line that opens a section.
 
-        if len(words) == 1 and len(words[0]) >= 8:
-            glued = words[0].rstrip(':')
-            split = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', glued)
-            if ' ' in split:
-                return _match_section(split)
-            glued_lower = glued.lower()
-            for alias, canon in SECTION_ALIASES.items():
-                if ' ' in alias and alias.replace(' ', '') == glued_lower:
-                    return canon
-
+    inside a role or project the same label describes that entry, and inside
+    skills or education a "Languages:" line is a sub-label, so both stay put."""
+    m = _INLINE_LABEL_RE.match(_MD_STRIP_RE.sub('', line))
+    if not m:
         return None
+    canonical = SECTION_ALIASES.get(m.group(1).strip().lower())
+    if not canonical or canonical == current or current in _ENTRY_SECTIONS:
+        return None
+    if current in ("SKILLS", "EDUCATION") and canonical in _SUBSECTION_OVERRIDES:
+        return None
+    return canonical, m.group(2).strip()
 
 
 def _is_header_fragment(line: str) -> bool:
@@ -404,6 +415,13 @@ def _lines_to_resume(all_lines: list[str], result: ParsedResume | None = None) -
             canonical = _match_section(merged)
             if canonical:
                 skip_next = True
+
+        if not canonical:
+            inline = _inline_section(line, current)
+            if inline:
+                current, value = inline
+                sections.setdefault(current, []).append(value)
+                continue
 
         if canonical and canonical != current:
             if current in ("SKILLS", "EDUCATION") and canonical in _SUBSECTION_OVERRIDES:
