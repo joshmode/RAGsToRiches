@@ -268,6 +268,12 @@ def _evict_locked() -> None:
         _fw_cache.pop(oldest, None)
 
 
+def warm_up() -> None:
+    """Load the embedding model and sync the guides now, before a bullet needs them."""
+    _get_col()
+    _embed("warm-up")
+
+
 def get_cache_stats() -> dict[str, int]:
     with _fw_cache_lock:
         return {

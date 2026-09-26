@@ -13,6 +13,13 @@ COPY requirements-engine.txt .
 
 RUN pip install --no-cache-dir -r requirements-engine.txt
 
+# the embedding model lives in the image, or every rebuilt container downloads it again
+ENV HF_HOME=/opt/huggingface
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+# load it when the worker starts, not on the first analysis
+ENV ENGINE_WARMUP=true
+
 COPY . .
 
 EXPOSE 5001

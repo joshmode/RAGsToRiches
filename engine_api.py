@@ -42,6 +42,21 @@ app.json.sort_keys = False
 app.config["MAX_CONTENT_LENGTH"] = 40 * 1024 * 1024
 
 
+def _warm_up() -> None:
+    try:
+        import vector_db
+        vector_db.warm_up()
+        app.logger.info("embedding model and framework index loaded")
+    except Exception as err:
+        app.logger.warning("warm-up skipped: %s", err)
+
+
+# torch and the embedding model take seconds to load. doing it in the background at
+# start means /health answers straight away and the first analysis doesn't wait
+if os.environ.get("ENGINE_WARMUP", "false").lower() == "true":
+    threading.Thread(target=_warm_up, daemon=True).start()
+
+
 @app.errorhandler(HTTPException)
 def _http_err(e: HTTPException):
     return jsonify({"error": e.description or e.name}), e.code
