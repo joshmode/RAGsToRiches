@@ -103,3 +103,26 @@ def test_the_fallback_calls_run_side_by_side(monkeypatch):
 def test_malformed_batches_are_rejected(parsed):
     with pytest.raises(ValueError):
         analyser._align_batch([MIGRATION, KAFKA, TESTS], parsed)
+
+
+def test_each_bullet_names_its_own_frameworks(monkeypatch):
+    from vector_db import FwHit
+
+    def hit(name):
+        return FwHit(document=f"{name} guide text", framework=name, category="structure", score=0.9)
+
+    prompts = []
+
+    def fake(user_prompt="", **kwargs):
+        prompts.append(user_prompt)
+        return json.dumps([{**MIGRATION_REWRITE, "index": 0}, {**KAFKA_REWRITE, "index": 1}])
+
+    monkeypatch.setattr(analyser, "llm_call", fake)
+    analyser.rewrite_chunk(
+        [(MIGRATION, [hit("XYZ"), hit("STAR"), hit("Verbs")]), (KAFKA, [hit("STAR"), hit("Metrics")])],
+        [], "gemini", "",
+    )
+    prompt = prompts[0]
+    assert f"[0] (guides: F1, F2, F3) {MIGRATION}" in prompt
+    assert f"[1] (guides: F2, F4) {KAFKA}" in prompt
+    assert prompt.count("STAR guide text") == 1

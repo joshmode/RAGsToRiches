@@ -513,16 +513,21 @@ def rewrite_chunk(
 
     kw_hint = ", ".join(missing_kws[:12]) if missing_kws else "none"
 
-    seen_fw: dict[str, None] = {}
+    # each guide once, numbered, and each bullet names the guides retrieved for it.
+    # merging them into one pool lost the per-bullet grounding the retrieval is for
+    guides: dict[str, str] = {}
     for _text, fws in items:
         for f in fws:
-            seen_fw.setdefault(f.document, None)
-    fw_ctx = "\n\n".join(seen_fw.keys())
+            guides.setdefault(f.document, f"F{len(guides) + 1}")
+    fw_ctx = "\n\n".join(f"[{label}] {document}" for document, label in guides.items()) or "none"
 
-    bullets_block = "\n\n".join(f"[{i}] {text}" for i, (text, _fws) in enumerate(items))
+    bullets_block = "\n\n".join(
+        f"[{i}] (guides: {', '.join(guides[f.document] for f in fws) or 'none'}) {text}"
+        for i, (text, fws) in enumerate(items)
+    )
 
     usr_prompt = (
-        f"FRAMEWORK GUIDANCE (apply the most relevant one to each bullet):\n{fw_ctx}\n\n"
+        f"FRAMEWORK GUIDANCE (apply the most relevant of the guides listed with each bullet):\n{fw_ctx}\n\n"
         f"ATS KEYWORDS TO WEAVE IN NATURALLY (only if genuinely relevant):\n{kw_hint}\n\n"
         f"BULLETS TO REWRITE — {len(items)} independent bullets, numbered in order. "
         f"Rewrite EVERY one, keep the same order, do not merge or skip any:\n{bullets_block}\n\n"
@@ -878,7 +883,7 @@ def analyse(
         text = unit["text"]
         if unit["eligible"] and unit["id"] not in strong:
             if text not in fw_cache_local:
-                fw_cache_local[text] = query_fw(text, n_results=2)
+                fw_cache_local[text] = query_fw(text, n_results=3)
     t_retrieval = time.perf_counter() - t_retrieval
     emit("retrieved", retrieval_ms=int(t_retrieval * 1000))
 
