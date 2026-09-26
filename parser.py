@@ -253,13 +253,99 @@ def _ocr_fallback(raw: bytes) -> list[str]:
     return all_lines
 
 
+# a block that is only a date or a date range, like a right-aligned "2021 - 2023"
+_DATE_BLOCK_RE = re.compile(
+    r'^[\s(]*(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*)?(?:19|20)\d{2}'
+    r'(?:\s*(?:[-–—]|to)\s*(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*)?'
+    r'(?:(?:19|20)\d{2}|present|current|now))?[\s)]*$',
+    re.IGNORECASE,
+)
+
+
+def _side_by_side(blocks: list) -> list:
+    """blocks that share a row with another block they don't overlap horizontally.
+    a centred name or a full-width heading has no partner, so it can't hide a gutter"""
+    paired = []
+    for a in blocks:
+        for b in blocks:
+            if a is b:
+                continue
+            same_row = a[1] < b[3] and b[1] < a[3]
+            apart = a[2] <= b[0] or b[2] <= a[0]
+            if same_row and apart:
+                paired.append(a)
+                break
+    return paired
+
+
+def _column_gutter(blocks: list, page_width: float) -> float | None:
+    """x of the gap between two text columns, or None for a single-column page."""
+    paired = _side_by_side(blocks)
+    if len(paired) < 4:
+        return None
+
+    covered: list[list[float]] = []
+    for x0, x1 in sorted((b[0], b[2]) for b in paired):
+        if covered and x0 <= covered[-1][1]:
+            covered[-1][1] = max(covered[-1][1], x1)
+        else:
+            covered.append([x0, x1])
+
+    lo, hi = page_width * 0.2, page_width * 0.8
+    gaps = [
+        (covered[i][1], covered[i + 1][0]) for i in range(len(covered) - 1)
+        if covered[i + 1][0] - covered[i][1] >= 6 and lo <= (covered[i][1] + covered[i + 1][0]) / 2 <= hi
+    ]
+    if not gaps:
+        return None
+    start, end = max(gaps, key=lambda g: g[1] - g[0])
+    gutter = (start + end) / 2
+
+    left = [b for b in blocks if b[2] <= gutter]
+    right = [b for b in blocks if b[0] >= gutter]
+    if len(left) < 2 or len(right) < 2:
+        return None
+    # right-aligned dates beside each job title look like a column but aren't one
+    for side in (left, right):
+        if sum(1 for b in side if _DATE_BLOCK_RE.match(b[4].strip())) * 2 >= len(side):
+            return None
+    left_chars = sum(len(b[4].strip()) for b in left)
+    right_chars = sum(len(b[4].strip()) for b in right)
+    if min(left_chars, right_chars) < 0.15 * (left_chars + right_chars):
+        return None
+    return gutter
+
+
+def _reading_order(blocks: list, page_width: float) -> list:
+    """row by row for a single column. for two columns, each column top to bottom,
+    with a block that crosses the gutter (a name, a full-width heading) starting a
+    new band so it keeps its place between them"""
+    gutter = _column_gutter(blocks, page_width)
+    if gutter is None:
+        return sorted(blocks, key=lambda b: (round(b[1] / 10), b[0]))
+
+    left = [b for b in blocks if b[2] <= gutter]
+    right = [b for b in blocks if b[0] >= gutter]
+    spans = sorted((b for b in blocks if b[0] < gutter < b[2]), key=lambda b: (b[1], b[0]))
+
+    ordered = []
+    top = float("-inf")
+    for span in [*spans, None]:
+        bottom = span[1] if span else float("inf")
+        for column in (left, right):
+            ordered += sorted((b for b in column if top <= b[1] < bottom), key=lambda b: (b[1], b[0]))
+        if span:
+            ordered.append(span)
+            top = span[1]
+    return ordered
+
+
 def _sorted_blocks(page: fitz.Page) -> list[str]:
     blocks = page.get_text("blocks")
-    txt_blocks = [b for b in blocks if b[6] == 0]
-    txt_blocks.sort(key=lambda b: (round(b[1] / 10), b[0]))
+    txt_blocks = [b for b in blocks if b[6] == 0 and b[4].strip()]
 
     lines = []
-    for blk in txt_blocks:
+    for blk in _reading_order(txt_blocks, page.rect.width):
         for raw in blk[4].split("\n"):
             s = raw.strip()
             if s and not _EMPTY_BULLET_RE.match(s):
