@@ -56,33 +56,9 @@ router.delete("/api-key/:provider", requireAuth, (req, res) => {
     res.json({ ok: true })
 })
 
-router.get("/feedback-status", async (req, res) => {
-    const engineUrl = req.app.locals.engineUrl
-    try {
-        res.json(await (await fetch(`${engineUrl}/feedback-status`)).json())
-    } catch (err) {
-        res.json({ silenced: false })
-    }
-})
-
-// writes global engine state unlike the GETs above so it needs auth
-router.post("/silence-feedback", requireAuth, async (req, res) => {
-    const engineUrl = req.app.locals.engineUrl
-    try {
-        await fetch(`${engineUrl}/silence-feedback`, { method: "POST" })
-        res.json({ ok: true })
-    } catch {
-        res.json({ ok: false })
-    }
-})
-
-router.get("/forms-url", async (req, res) => {
-    const engineUrl = req.app.locals.engineUrl
-    try {
-        res.json(await (await fetch(`${engineUrl}/forms-url`)).json())
-    } catch {
-        res.json({ url: "https://forms.gle/YOUR_FORM_ID_HERE" })
-    }
+// an optional external form beside the in-app rating. unset means no link
+router.get("/feedback-form", (_req, res) => {
+    res.json({ url: process.env.FEEDBACK_FORM_URL || "" })
 })
 
 export default router

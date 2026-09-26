@@ -6,7 +6,6 @@ services:
       CRITIC_MODEL: nvidia/nemotron-3-ultra-550b-a55b:free
     volumes:
       - ./chroma_db:/app/chroma_db
-      - ./data:/app/data
   api:
     environment:
       NODE_ENV: production

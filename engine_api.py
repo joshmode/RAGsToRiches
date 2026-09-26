@@ -32,7 +32,6 @@ from document_export import generate_docx, generate_pdf
 from pdf_highlight import highlight_pdf
 import job_scraper
 import job_fit
-import feedback
 
 app = Flask(__name__)
 # jsonify sorts keys by default, which put EDUCATION before EXPERIENCE and lost
@@ -322,22 +321,6 @@ def env_status():
         "openrouter": bool(openrouter_key) and not _is_key_placeholder(openrouter_key),
         "linkedin": bool(li_id) and not _is_key_placeholder(li_id) and bool(li_secret) and not _is_key_placeholder(li_secret),
     })
-
-
-@app.route("/feedback-status", methods=["GET"])
-def feedback_status():
-    return jsonify({"silenced": feedback.is_feedback_silenced()})
-
-
-@app.route("/silence-feedback", methods=["POST"])
-def silence_feedback_endpoint():
-    feedback.silence_feedback()
-    return jsonify({"ok": True})
-
-
-@app.route("/forms-url", methods=["GET"])
-def forms_url():
-    return jsonify({"url": feedback.get_forms_url()})
 
 
 if __name__ == "__main__":

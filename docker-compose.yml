@@ -8,7 +8,6 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./chroma_db:/app/chroma_db
-      - ./data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
