@@ -514,7 +514,7 @@ router.get("/insights/delta", requireAuth, (req, res) => {
     try { toResults = JSON.parse(to.results_json) } catch {}
     const before = fromResults.score || {}
     const after = toResults.score || {}
-    const keys = ["total", "base", "sections", "keywords", "bullet_quality", "action_verbs", "warnings"]
+    const keys = ["total", "quantification", "action_verbs", "structure"]
     const delta = Object.fromEntries(keys.map(key => [key, (after[key] || 0) - (before[key] || 0)]))
     res.json({ from: from.id, to: to.id, delta })
 })

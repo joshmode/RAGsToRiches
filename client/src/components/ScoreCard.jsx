@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Mail, TrendingDown, TrendingUp } from "lucide-react"
-import { getScoreCfg, heatmapQuality } from "../lib/score"
+import { getScoreCfg, heatmapQuality, isGraded, scoreBreakdown } from "../lib/score"
 
 function useCountUp(target, duration = 700) {
     const [display, setDisplay] = useState(target)
@@ -48,15 +48,7 @@ export function ScoreCard({ scoreData, history, attemptType }) {
         </div>
     }
     const cfg = getScoreCfg(score)
-    const lines = typeof scoreData === "object" ? [
-        `Base: ${scoreData.base || 0}`,
-        `Sections: +${scoreData.sections || 0}`,
-        `Keywords: +${scoreData.keywords || 0}`,
-        `Bullet Quality: +${scoreData.bullet_quality || 0}`,
-        `Action Verbs: +${scoreData.action_verbs || 0}`,
-        `Warnings: ${scoreData.warnings || 0}`,
-        `Total: ${score}/100`,
-    ] : ["Score breakdown not available"]
+    const lines = scoreBreakdown(scoreData)
     const sectionScores = (typeof scoreData === "object" && scoreData?.section_scores) || {}
     const previousScore = history && history.length > 1 ? history[1].score : null
     const delta = previousScore != null ? score - previousScore : null
@@ -87,7 +79,7 @@ export function ScoreCard({ scoreData, history, attemptType }) {
                     <div className="tooltip-divider" />
                     <div className="tooltip-heat-label">Section strength</div>
                     {Object.entries(sectionScores).map(([sec, data]) => {
-                        const hq = heatmapQuality(data.quality)
+                        const hq = heatmapQuality(isGraded(data) ? data.quality : null)
                         return <div className="tooltip-heat-row" key={sec}>
                             <span className="heat-swatch" style={{ background: hq.color }} />
                             <span>{sec[0] + sec.slice(1).toLowerCase()}</span>

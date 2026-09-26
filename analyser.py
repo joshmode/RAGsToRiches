@@ -15,6 +15,7 @@ from prompt_registry import prompt_set_version, prompt_versions, register
 from vector_db import query_fw
 from parser import ParsedResume
 from router import llm_call
+from scoring import bullet_signals, score_bullets
 
 load_dotenv()
 
@@ -663,82 +664,53 @@ def _build_units(sec: str, lines: list[str]) -> list[dict[str, Any]]:
     return units
 
 
-def calc_score(resume: ParsedResume, jd_kws: list[str], missing: list[str], rewrites: dict[str, list[dict]]) -> dict:
-    bd = {"base": 30, "sections": 0, "keywords": 0, "bullet_quality": 0, "action_verbs": 0, "warnings": 0, "total": 0}
+_PRIMARY_SECTIONS = ("EXPERIENCE", "PROJECTS", "VOLUNTEER", "SUMMARY")
 
-    for sec in ("EXPERIENCE", "EDUCATION", "SKILLS", "PROJECTS"):
-        if sec in resume.sections:
-            bd["sections"] += 8
 
-    if jd_kws:
-        found = len(jd_kws) - len(missing)
-        bd["keywords"] += int((found / len(jd_kws)) * 20)
+def _plan_units(resume: ParsedResume) -> list[tuple[str, int, dict[str, Any]]]:
+    """Every unit the pipeline looks at, with its final eligibility.
 
-    qual = 0
-    actionable_n = 0
-    verb_hits = 0
-    escalations = 0
-    section_scores: dict[str, dict] = {}
+    Shared by the score and the rewrite loop so both see the same bullets.
+    """
+    jobs: list[tuple[str, int, dict[str, Any]]] = []
 
-    # the heatmap grades every bullet the model actually looked at
-    for sec_name, items in rewrites.items():
-        sec_qual = 0
-        sec_count = 0
-        sec_verbs = 0
-        sev_counts = {"red": 0, "yellow": 0, "green": 0}
-        for item in items:
-            if item.get("framework_used") in ("none", "error"):
-                continue
-            sec_count += 1
-            sev = item.get("severity", "yellow")
-            sev_counts[sev] = sev_counts.get(sev, 0) + 1
-            sec_qual += {"green": 3, "yellow": 2, "red": 1}.get(sev, 1)
-            lead_word = item.get("rewritten", "").split()[0].lower().rstrip(".,;:") if item.get("rewritten", "").strip() else ""
-            # An escalated verb ("helped" rewritten as "led") must not earn the
-            # action-verb point, or the rubric rewards the exact fabrication the
-            # claim checks exist to catch.
-            escalated = bool(item.get("verb_escalation"))
-            if escalated:
-                escalations += 1
-            strong_verb = lead_word in _ACTION_VERBS and not escalated
-            if strong_verb:
-                sec_verbs += 1
+    for sec in _PRIMARY_SECTIONS:
+        lines = resume.sections.get(sec, [])
+        if not lines:
+            continue
+        for i, unit in enumerate(_build_units(sec, lines)):
+            unit["eligible"] = unit["eligible"] and not _is_header(unit["text"], section=sec)
+            jobs.append((sec, i, unit))
 
-            changed = item.get("original") != item.get("rewritten")
-            if changed:
-                actionable_n += 1
-                qual += {"green": 2, "yellow": 1, "red": 0}.get(sev, 0)
-                if strong_verb:
-                    verb_hits += 1
-        if sec_count > 0:
-            section_scores[sec_name] = {
-                "quality": min(100, int((sec_qual / (sec_count * 3)) * 100)),
-                "verb_ratio": round(sec_verbs / sec_count, 2),
-                "severity_counts": sev_counts,
-                "bullet_count": sec_count,
-            }
+    # everything else the parser found. this was a fixed whitelist once and it kept drifting out
+    for sec, lines in resume.sections.items():
+        if sec == "HEADER" or sec in _PRIMARY_SECTIONS or not lines:
+            continue
+        for i, unit in enumerate(_build_units(sec, lines)):
+            text = unit["text"]
+            words = text.split()
+            unit["eligible"] = (
+                unit["eligible"]
+                or (len(words) >= 4 and not _is_header(text, section=sec))
+            ) and not _is_header(text, section=sec)
+            jobs.append((sec, i, unit))
 
-    # sections with content but nothing gradable should stay
-    for sec_name in resume.sections:
-        if sec_name != "HEADER" and sec_name not in section_scores:
-            section_scores[sec_name] = {
-                "quality": 100, "verb_ratio": 0,
-                "severity_counts": {"red": 0, "yellow": 0, "green": 0}, "bullet_count": 0,
-            }
+    return jobs
 
-    bd["bullet_quality"] = min(10, qual)
 
-    if actionable_n > 0:
-        bd["action_verbs"] = min(8, int((verb_hits / actionable_n) * 8))
+def calc_score(resume: ParsedResume, rewrites: dict[str, list[dict]] | None = None) -> dict:
+    """Score the resume from its own bullets (see ``scoring``).
 
-    bd["warnings"] = -(len([w for w in resume.warnings if "not detected" in w]) * 3)
-
-    total = sum(v for k, v in bd.items() if k != "total")
-    bd["total"] = max(0, min(100, total))
-    # Added after the sum: these are diagnostics, not score components.
-    bd["section_scores"] = section_scores
-    bd["verb_escalations"] = escalations
-    return bd
+    ``rewrites`` is only read for the escalation count, which is a diagnostic:
+    the rewrite text never reaches the score, so an escalated verb can't earn
+    anything.
+    """
+    bullets = [(sec, unit["text"]) for sec, _i, unit in _plan_units(resume) if unit["eligible"]]
+    score = score_bullets(bullets, sections=resume.sections.keys())
+    score["verb_escalations"] = sum(
+        1 for items in (rewrites or {}).values() for item in items if item.get("verb_escalation")
+    )
+    return score
 
 
 def analyse(
@@ -780,29 +752,7 @@ def analyse(
 
     rewrites: dict[str, list[dict]] = {}
 
-    primary = ("EXPERIENCE", "PROJECTS", "VOLUNTEER", "SUMMARY")
-
-    jobs: list[tuple[str, int, dict]] = []
-
-    for sec in primary:
-        lines = resume.sections.get(sec, [])
-        if not lines:
-            continue
-        for i, unit in enumerate(_build_units(sec, lines)):
-            jobs.append((sec, i, unit))
-
-    # everything else the parser found. this was a fixed whitelist once and it kept drifting out
-    for sec, lines in resume.sections.items():
-        if sec == "HEADER" or sec in primary or not lines:
-            continue
-        for i, unit in enumerate(_build_units(sec, lines)):
-            text = unit["text"]
-            words = text.split()
-            unit["eligible"] = (
-                unit["eligible"]
-                or (len(words) >= 4 and not _is_header(text, section=sec))
-            )
-            jobs.append((sec, i, unit))
+    jobs = _plan_units(resume)
 
     emit("planned", bullets=len(jobs))
 
@@ -810,7 +760,7 @@ def analyse(
     fw_cache_local: dict[str, list] = {}
     for sec, i, unit in jobs:
         text = unit["text"]
-        if unit["eligible"] and not _is_header(text, section=sec):
+        if unit["eligible"]:
             if text not in fw_cache_local:
                 fw_cache_local[text] = query_fw(text, n_results=2)
     t_retrieval = time.perf_counter() - t_retrieval
@@ -848,7 +798,7 @@ def analyse(
     results_by_sec: dict[str, list[tuple[int, dict]]] = {}
     eligible_jobs: list[tuple[str, int, dict]] = []
     for sec, i, unit in jobs:
-        if unit["eligible"] and not _is_header(unit["text"], section=sec):
+        if unit["eligible"]:
             eligible_jobs.append((sec, i, unit))
         else:
             results_by_sec.setdefault(sec, []).append((i, _label_rw(sec, unit)))
@@ -866,6 +816,8 @@ def analyse(
             rw["section"] = sec
             rw["line_indices"] = unit["line_indices"]
             rw["highlight_text"] = unit["text"]
+            # what the score saw in the original, so the UI can say why
+            rw["signals"] = bullet_signals(unit["text"])
             out.append((sec, i, rw))
         return out
 
@@ -907,7 +859,7 @@ def analyse(
         items.sort(key=lambda x: x[0])
         rewrites[sec] = [rw for _, rw in items]
 
-    score = calc_score(resume, jd_kws, missing, rewrites)
+    score = calc_score(resume, rewrites)
     freqs = kw_freqs(jd_kws, resume.raw_text)
     t_total = time.perf_counter() - t_start
     critic_counts: dict[str, int] = {}

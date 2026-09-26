@@ -59,37 +59,45 @@ def test_finalise_survives_a_missing_rewrite():
 
 # ---------------------------------------------------------------- calc_score
 
-def test_escalated_bullet_earns_no_action_verb_point():
-    rewrites = {"EXPERIENCE": [_graded("Helped with the migration", "Led the migration")]}
-    score = analyser.calc_score(_resume(), [], [], rewrites)
-    assert score["action_verbs"] == 0
-    assert score["verb_escalations"] == 1
+HELPED = "Helped with the migration of the billing service"
+ASSISTED = "Assisted the team with release planning each sprint"
+
+
+def test_escalated_rewrite_cannot_raise_the_score():
+    resume = _resume({"EXPERIENCE": [f"- {HELPED}"]})
+    before = analyser.calc_score(resume)
+    rewrites = {"EXPERIENCE": [_graded(HELPED, "Led the migration of the billing service")]}
+    after = analyser.calc_score(resume, rewrites)
+    assert after["total"] == before["total"]
+    assert after["action_verbs"] == 0
+    assert after["verb_escalations"] == 1
 
 
 def test_honest_strong_verb_still_earns_the_point():
-    rewrites = {"EXPERIENCE": [_graded("Built the API", "Developed the API gateway")]}
-    score = analyser.calc_score(_resume(), [], [], rewrites)
-    assert score["action_verbs"] == 8
+    resume = _resume({"EXPERIENCE": ["- Built the internal API gateway for the platform team"]})
+    score = analyser.calc_score(resume)
+    assert score["action_verbs"] == 30
     assert score["verb_escalations"] == 0
 
 
 def test_escalation_count_is_a_diagnostic_not_a_score_component():
+    resume = _resume({"EXPERIENCE": [f"- {HELPED}", f"- {ASSISTED}"]})
     rewrites = {
         "EXPERIENCE": [
-            _graded("Helped with the migration", "Led the migration"),
-            _graded("Assisted the team", "Directed the team"),
+            _graded(HELPED, "Led the migration of the billing service"),
+            _graded(ASSISTED, "Directed release planning each sprint"),
         ]
     }
-    score = analyser.calc_score(_resume(), [], [], rewrites)
+    score = analyser.calc_score(resume, rewrites)
     assert score["verb_escalations"] == 2
-    components = ("base", "sections", "keywords", "bullet_quality", "action_verbs", "warnings")
-    assert score["total"] == max(0, min(100, sum(score[k] for k in components)))
+    components = ("quantification", "action_verbs", "structure")
+    assert score["total"] == sum(score[k] for k in components)
 
 
 def test_score_stays_within_bounds():
-    rewrites = {"EXPERIENCE": [_graded("Built the API", "Developed the API gateway")]}
-    resume = _resume({sec: ["x"] for sec in ("EXPERIENCE", "EDUCATION", "SKILLS", "PROJECTS")})
-    score = analyser.calc_score(resume, ["python"], [], rewrites)
+    bullet = "- Reduced checkout latency by 35% by caching product lookups in Redis"
+    resume = _resume({sec: [bullet] for sec in ("EXPERIENCE", "EDUCATION", "SKILLS", "PROJECTS")})
+    score = analyser.calc_score(resume)
     assert 0 <= score["total"] <= 100
 
 

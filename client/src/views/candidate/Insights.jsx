@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
-import { heatmapQuality } from "../../lib/score"
+import { heatmapQuality, isGraded } from "../../lib/score"
 import { formatDateTime, formatDuration } from "../../lib/format"
 
 const SECTION_ORDER = [
@@ -41,7 +41,7 @@ export function Insights({ result, history, decisions }) {
     const missingKeywords = result.missing_keywords || []
     const atsMatch = jdKeywords.length ? Math.round(((jdKeywords.length - missingKeywords.length) / jdKeywords.length) * 100) : null
 
-    const gradedSections = Object.entries(result.score?.section_scores || {}).filter(([, d]) => d.bullet_count > 0)
+    const gradedSections = Object.entries(result.score?.section_scores || {}).filter(([, d]) => isGraded(d))
     let strongest = null, weakest = null
     for (const [sec, d] of gradedSections) {
         if (!strongest || d.quality > strongest.quality) strongest = { sec, quality: d.quality }
@@ -53,8 +53,9 @@ export function Insights({ result, history, decisions }) {
         const latest = overview[overview.length - 1]
         const prior = overview[overview.length - 2]
         for (const [sec, d] of Object.entries(latest.score?.section_scores || {})) {
-            const priorQ = prior.score?.section_scores?.[sec]?.quality
-            if (priorQ == null) continue
+            const priorCell = prior.score?.section_scores?.[sec]
+            if (!isGraded(d) || !isGraded(priorCell)) continue
+            const priorQ = priorCell.quality
             const delta = d.quality - priorQ
             if (delta > 0 && (!mostImproved || delta > mostImproved.delta)) mostImproved = { sec, delta }
         }
@@ -108,7 +109,7 @@ export function Insights({ result, history, decisions }) {
         <p className="muted">How strong each section's writing has been across your attempts. Each row is one attempt, oldest first.</p>
         {overview && overview.length > 0 && sectionCols.length > 0 ? <div className="heatmap-table-wrap"><table className="heatmap-table"><thead><tr><th>Attempt</th>{sectionCols.map(sec => <th key={sec}>{titleCase(sec)}</th>)}</tr></thead><tbody>{overview.map((a, idx) => <tr key={a.id}><td className="heatmap-row-label"><b>#{idx + 1}</b><small>{String(a.created_at || "").slice(0, 10)}</small></td>{sectionCols.map(sec => {
             const cell = a.score?.section_scores?.[sec]
-            if (!cell) return <td key={sec}><div className="heatmap-square empty">—</div></td>
+            if (!isGraded(cell)) return <td key={sec}><div className="heatmap-square empty" title={cell ? "Not graded: no bullets the rubric applies to" : undefined}>—</div></td>
             const hq = heatmapQuality(cell.quality)
             return <td key={sec}><div className="heatmap-square" style={{ background: hq.color }} title={`${hq.label} — ${cell.quality}%`}>
                 <span className="heatmap-square-pct">{cell.quality}%</span>
