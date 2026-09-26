@@ -1,5 +1,6 @@
 import app from "./app.js"
 import { getDb } from "./db.js"
+import { recoverJobs } from "./routes/analysis.js"
 
 const PORT = process.env.API_PORT || 3000
 
@@ -9,6 +10,8 @@ process.on("unhandledRejection", (err) => {
 })
 
 getDb()
+const resumed = recoverJobs(app.locals.engineUrl)
+if (resumed) console.log(`resumed ${resumed} analysis job(s) interrupted by the last restart`)
 
 const server = app.listen(PORT, () => {
     console.log(`ragstoriches api listening on :${PORT}`)

@@ -10,6 +10,7 @@ import { fetchEngine } from "../engineClient.js"
 import { resolveProvider, ProviderError, PROVIDER_CHOICES } from "../userKeys.js"
 import { saveRev } from "../documents.js"
 import { saveAnalysis, updateResults } from "../analyses.js"
+import { parseSSEBuffer } from "../sse.js"
 
 const router = Router()
 const ANALYSIS_CACHE_TTL_MINUTES = parseInt(process.env.ANALYSIS_CACHE_TTL_MINUTES || "60", 10)
@@ -150,10 +151,25 @@ async function run(engineUrl, jobId, payload) {
     }
 }
 
-// Streams analysis progress straight through from the engine as server-sent
-// events. Additive: /run and its job+polling path are untouched and remain the
-// default. This exists so a long analysis fills in as it goes rather than
-// landing all at once, which is most of the perceived latency.
+// the newest cached analysis for these exact inputs, if there's one in the ttl
+function cachedAnalysis(userId, hash) {
+    if (ANALYSIS_CACHE_TTL_MINUTES <= 0) return null
+    return getDb().prepare(
+        `SELECT id FROM analyses WHERE user_id = ? AND content_hash = ? AND content_hash != '' AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 1`
+    ).get(userId, hash, `-${ANALYSIS_CACHE_TTL_MINUTES} minutes`)
+}
+
+const SSE_HEADERS = {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+// Streams analysis progress from the engine as server-sent events, so a long
+// analysis fills in batch by batch instead of landing all at once. The final
+// event is saved like any other analysis and carries its analysis_id, and the
+// same inputs again are answered from the cache without touching the engine.
 router.post("/stream", requireAuth, llmLimiter, async (req, res) => {
     const { job_description, provider, use_critic, local_endpoint, resume_id } = req.body
     const resumeId = parseInt(resume_id)
@@ -175,6 +191,16 @@ router.post("/stream", requireAuth, llmLimiter, async (req, res) => {
     } catch (err) {
         if (err instanceof ProviderError) return res.status(err.status).json({ error: err.message })
         throw err
+    }
+
+    const hash = contentHash({ fileKey: fileKey(resume), jobDescription: job_description, provider, useCritic: use_critic, localEndpoint: local_endpoint })
+    const cached = cachedAnalysis(req.user.id, hash)
+    if (cached) {
+        let results = {}
+        try { results = JSON.parse(getAnalysis(cached.id, req.user.id).results_json) } catch {}
+        res.writeHead(200, SSE_HEADERS)
+        res.write(`data: ${JSON.stringify({ stage: "done", cached: true, result: results })}\n\n`)
+        return res.end()
     }
 
     let upstream
@@ -201,31 +227,39 @@ router.post("/stream", requireAuth, llmLimiter, async (req, res) => {
 
     // Headers must go out before the first chunk, and buffering must be off at
     // every hop or the whole point is lost.
-    res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
-    })
+    res.writeHead(200, SSE_HEADERS)
     res.flushHeaders?.()
 
-    // If the client goes away, stop pulling from the engine rather than reading
-    // the whole analysis into a socket nobody is listening to.
+    // a closed tab or a refresh stops the writes, not the analysis: it's read to
+    // the end and saved, so the next request for it is a cache hit
     let closed = false
-    res.on("close", () => {
-        closed = true
-        upstream.body.destroy?.()
-    })
+    res.on("close", () => { closed = true })
+    const send = event => { if (!closed) res.write(`data: ${JSON.stringify(event)}\n\n`) }
 
+    const decoder = new TextDecoder()
+    let buffer = ""
     try {
         for await (const chunk of upstream.body) {
-            if (closed) break
-            res.write(chunk)
+            buffer += decoder.decode(chunk, { stream: true })
+            const parsed = parseSSEBuffer(buffer)
+            buffer = parsed.rest
+            for (const event of parsed.events) {
+                if (event.stage !== "done") {
+                    send(event)
+                    continue
+                }
+                const results = event.result || {}
+                results.parsed_resume = resume_json
+                results.job_description = job_description || ""
+                saveAnalysis({
+                    userId: req.user.id, resumeId, results,
+                    jobDescription: job_description, provider, hash,
+                })
+                send({ ...event, result: results })
+            }
         }
     } catch (err) {
-        if (!closed) {
-            res.write(`data: ${JSON.stringify({ stage: "error", error: "The analysis stream was interrupted." })}\n\n`)
-        }
+        send({ stage: "error", error: "The analysis stream was interrupted." })
     } finally {
         if (!closed) res.end()
     }
@@ -261,17 +295,13 @@ router.post("/run", requireAuth, llmLimiter, (req, res) => {
     }
     const db = getDb()
 
-    if (ANALYSIS_CACHE_TTL_MINUTES > 0) {
-        const hash = contentHash({ fileKey: payload.file_key, jobDescription: job_description, provider, useCritic: use_critic, localEndpoint: local_endpoint })
-        const cached = db.prepare(
-            `SELECT id FROM analyses WHERE user_id = ? AND content_hash = ? AND content_hash != '' AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 1`
-        ).get(req.user.id, hash, `-${ANALYSIS_CACHE_TTL_MINUTES} minutes`)
-        if (cached) {
-            const job = db.prepare(
-                "INSERT INTO analysis_jobs (resume_id, user_id, request_json, status, analysis_id, created_at, updated_at) VALUES (?, ?, ?, 'completed', ?, datetime('now'), datetime('now'))"
-            ).run(resumeId, req.user.id, JSON.stringify(payload), cached.id)
-            return res.status(202).json({ job_id: job.lastInsertRowid, status: "queued" })
-        }
+    const hash = contentHash({ fileKey: payload.file_key, jobDescription: job_description, provider, useCritic: use_critic, localEndpoint: local_endpoint })
+    const cached = cachedAnalysis(req.user.id, hash)
+    if (cached) {
+        const job = db.prepare(
+            "INSERT INTO analysis_jobs (resume_id, user_id, request_json, status, analysis_id, created_at, updated_at) VALUES (?, ?, ?, 'completed', ?, datetime('now'), datetime('now'))"
+        ).run(resumeId, req.user.id, JSON.stringify(payload), cached.id)
+        return res.status(202).json({ job_id: job.lastInsertRowid, status: "queued" })
     }
 
     const row = db.prepare(
@@ -440,6 +470,28 @@ router.post("/:id/refresh-jd", requireAuth, llmLimiter, async (req, res) => {
         res.status(500).json({ error: "Cover letter regeneration failed. Please try again." })
     }
 })
+
+// a restart kills the run() of every job that was queued or running. recent ones
+// start again from their stored request, older ones fail so a poller stops waiting
+export function recoverJobs(engineUrl) {
+    const db = getDb()
+    db.prepare(`
+        UPDATE analysis_jobs SET status = 'failed', updated_at = datetime('now'),
+            error = 'The server restarted during this analysis. Please run it again.'
+        WHERE status IN ('queued', 'running') AND updated_at < datetime('now', '-30 minutes')
+    `).run()
+    const pending = db.prepare("SELECT id, request_json FROM analysis_jobs WHERE status IN ('queued', 'running')").all()
+    for (const job of pending) {
+        let payload = null
+        try { payload = JSON.parse(job.request_json) } catch {}
+        if (payload) {
+            run(engineUrl, job.id, payload)
+        } else {
+            db.prepare("UPDATE analysis_jobs SET status = 'failed', error = 'The stored request could not be read.' WHERE id = ?").run(job.id)
+        }
+    }
+    return pending.length
+}
 
 router.get("/jobs/:jobId", requireAuth, pollLimiter, (req, res) => {
     const db = getDb()
