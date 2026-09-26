@@ -5,11 +5,10 @@ import { requireAuth } from "../middleware/auth.js"
 import { getDb } from "../db.js"
 import { getAnalysis } from "../access.js"
 import { fetchEngine } from "../engineClient.js"
-import { resolveProvider, ProviderError } from "../userKeys.js"
+import { resolveProvider, ProviderError, PROVIDER_CHOICES } from "../userKeys.js"
 import { llmLimiter } from "../middleware/rateLimit.js"
 
 const router = Router()
-const PROVIDER_CHOICES = new Set(["default", "gemini", "claude", "chatgpt", "local"])
 const COMPARE_CACHE_TTL_MINUTES = parseInt(process.env.ANALYSIS_CACHE_TTL_MINUTES || "60", 10)
 
 // same inputs = same prompt, replay the last result. v2 is the keyword-coverage

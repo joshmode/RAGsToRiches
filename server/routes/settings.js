@@ -1,7 +1,7 @@
 import { Router } from "express"
 import fetch from "node-fetch"
 import { requireAuth } from "../middleware/auth.js"
-import { BYOK_PROVIDERS, saveKey, deleteKey, hasKey, pooledProvider } from "../userKeys.js"
+import { BYOK_PROVIDERS, saveKey, deleteKey, hasKey, pooledProvider, demoAllowed } from "../userKeys.js"
 
 const router = Router()
 
@@ -12,11 +12,12 @@ router.get("/env-status", requireAuth, async (req, res) => {
         status[provider] = hasKey(req.user.id, provider)
     }
     status.localAllowed = process.env.ALLOW_LOCAL_PROVIDER === "true"
+    status.demo = demoAllowed()
 
     const engineUrl = req.app.locals.engineUrl
     try {
         const engine = await (await fetch(`${engineUrl}/env-status`)).json()
-        status.default = !!engine[pooledProvider()]
+        status.default = process.env.DEMO_MODE === "true" || !!engine[pooledProvider()]
         status.linkedin = !!engine.linkedin
     } catch {
         status.default = false

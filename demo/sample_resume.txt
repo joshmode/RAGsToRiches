@@ -1,0 +1,28 @@
+Jordan Lee
+jordan.lee@example.com | +1 555 010 0142 | github.com/jordanlee-demo
+
+SUMMARY
+Backend engineer with four years of experience building payment and data services.
+
+EXPERIENCE
+Software Engineer, Northwind Payments | 2022 - Present
+- Worked on the checkout service with the payments team to improve API performance
+- Helped with the migration of 12 legacy services to Kubernetes
+- Wrote documentation for the internal deployment tool
+- Reduced checkout latency by 35% by caching product lookups in Redis
+- Responsible for writing unit tests for the billing API
+
+Software Engineering Intern, Contoso Analytics | 2021
+- Built a Python script to clean survey data for the research team
+- Collaborated with designers on a new onboarding flow for the dashboard
+
+PROJECTS
+Budget Buddy | React, Node.js, PostgreSQL
+- Made a budgeting app that tracks spending across bank accounts
+- Set up CI with GitHub Actions to run tests on every pull request
+
+EDUCATION
+BSc Computer Science, National University | 2018 - 2022
+
+SKILLS
+Python, Go, TypeScript, React, Node.js, PostgreSQL, Redis, Docker, Kubernetes

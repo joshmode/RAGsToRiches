@@ -1,0 +1,96 @@
+{
+  "rewrites": {
+    "backend engineer with four years of experience building payment and data services.": {
+      "rewritten": "Backend engineer with four years of experience building payment and data services in Python and Go.",
+      "reasoning": "Already clear; named the languages the rest of the resume shows.",
+      "framework_used": "Action Verb",
+      "severity": "green"
+    },
+    "worked on the checkout service with the payments team to improve api performance": {
+      "rewritten": "Profiled and tuned checkout API endpoints with the payments team, cutting response times by [X%]",
+      "reasoning": "'Worked on' hid what was done; applied XYZ and left a placeholder for the missing figure.",
+      "framework_used": "Google XYZ",
+      "severity": "red"
+    },
+    "helped with the migration of 12 legacy services to kubernetes": {
+      "rewritten": "Led the migration of 12 legacy services to Kubernetes, standardising how teams deploy",
+      "reasoning": "Passive 'helped with' opener; used a stronger verb and kept the 12 services.",
+      "framework_used": "Action Verb",
+      "severity": "yellow"
+    },
+    "wrote documentation for the internal deployment tool": {
+      "rewritten": "Wrote the documentation for the internal deployment tool, cutting onboarding time for new engineers by 40%",
+      "reasoning": "No outcome; added the impact of the documentation.",
+      "framework_used": "Rule of 3",
+      "severity": "red",
+      "repaired": {
+        "rewritten": "Wrote the documentation for the internal deployment tool, cutting onboarding time for new engineers by [X%]",
+        "reasoning": "No outcome; added the impact with a placeholder for the figure.",
+        "framework_used": "Rule of 3",
+        "severity": "red"
+      }
+    },
+    "responsible for writing unit tests for the billing api": {
+      "rewritten": "Authored unit tests for the billing API, covering [X%] of its endpoints",
+      "reasoning": "'Responsible for' reads passively; led with the action and left a placeholder for coverage.",
+      "framework_used": "Action Verb",
+      "severity": "red"
+    },
+    "built a python script to clean survey data for the research team": {
+      "rewritten": "Built a Python pipeline that cleaned survey data for the research team, replacing [N hours] of manual work each week",
+      "reasoning": "Good verb but no result; applied XYZ with a placeholder for the time saved.",
+      "framework_used": "Google XYZ",
+      "severity": "yellow"
+    },
+    "collaborated with designers on a new onboarding flow for the dashboard": {
+      "rewritten": "Collaborated with designers on a new onboarding flow for the analytics dashboard, shipped to [N users]",
+      "reasoning": "Clear but no outcome; named the product and left a placeholder for reach.",
+      "framework_used": "STAR",
+      "severity": "yellow"
+    },
+    "made a budgeting app that tracks spending across bank accounts": {
+      "rewritten": "Developed a React and Node.js budgeting app that tracks spending across linked bank accounts",
+      "reasoning": "'Made' is vague; named the stack from the project heading.",
+      "framework_used": "Action Verb",
+      "severity": "yellow"
+    },
+    "set up ci with github actions to run tests on every pull request": {
+      "rewritten": "Set up CI with GitHub Actions so the test suite runs on every pull request, catching failures before review",
+      "reasoning": "Solid already; added why it mattered.",
+      "framework_used": "STAR",
+      "severity": "green"
+    }
+  },
+  "jd_profiles": [
+    {
+      "match": "Harbor Labs builds reconciliation software",
+      "profile": {
+        "keywords": [
+          "Python",
+          "Go",
+          "Kubernetes",
+          "AWS",
+          "CI/CD",
+          "PostgreSQL",
+          "Redis",
+          "Kafka",
+          "Terraform",
+          "observability"
+        ],
+        "company": "Harbor Labs",
+        "tips": [
+          "Lead with backend services you have run in production.",
+          "Name the databases and queues you have used, since the role lists them.",
+          "Mention monitoring or on-call work if you have done it."
+        ]
+      }
+    }
+  ],
+  "audits": {
+    "made a budgeting app that tracks spending across bank accounts": {
+      "verdict": "overstated",
+      "kind": "invented",
+      "reason": "React and Node.js come from the project heading, not from this bullet."
+    }
+  }
+}

@@ -16,6 +16,14 @@ const MASTER_KEY = crypto.createHash("sha256").update(KEY_ENCRYPTION_SECRET).dig
 
 export const BYOK_PROVIDERS = new Set(["gemini", "claude", "chatgpt"])
 
+// every provider the ui can ask for
+export const PROVIDER_CHOICES = new Set(["default", "gemini", "claude", "chatgpt", "local", "demo"])
+
+// recorded answers, no key and no network. on unless a deployment turns it off
+export function demoAllowed() {
+    return process.env.ALLOW_DEMO_PROVIDER !== "false"
+}
+
 function encrypt(plain) {
     const iv = crypto.randomBytes(12)
     const cipher = crypto.createCipheriv(ALGO, MASTER_KEY, iv)
@@ -86,7 +94,13 @@ export function pooledProvider() {
 // ui provider choice what the engine needs incl the user's own byok key
 export function resolveProvider(userId, choice) {
     if (choice === "default") {
+        // DEMO_MODE runs the whole free tier offline, for a keyless local run
+        if (process.env.DEMO_MODE === "true") return { engineProvider: "replay", apiKey: "" }
         return { engineProvider: pooledProvider(), apiKey: "" } // pooled key
+    }
+    if (choice === "demo") {
+        if (!demoAllowed()) throw new ProviderError("The offline demo is turned off for this deployment.", 403)
+        return { engineProvider: "replay", apiKey: "" }
     }
     if (choice === "local") {
         return { engineProvider: "local", apiKey: "" }

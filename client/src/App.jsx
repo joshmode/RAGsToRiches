@@ -32,6 +32,7 @@ const PROVIDER_OPTIONS = [
     { key: "claude", label: "Claude (Own Key)", byok: true },
     { key: "chatgpt", label: "ChatGPT (Own Key)", byok: true },
     { key: "local", label: "Local LLM", byok: false },
+    { key: "demo", label: "Demo (offline sample answers)", byok: false },
 ]
 
 // remembered across reloads so auto-collapse stops fighting them
@@ -78,13 +79,17 @@ function App() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [analysisId])
     const providerMeta = PROVIDER_OPTIONS.find(p => p.key === provider)
-    const visibleProviders = PROVIDER_OPTIONS.filter(p => p.key !== "local" || status.localAllowed)
+    const visibleProviders = PROVIDER_OPTIONS.filter(p => (p.key !== "local" || status.localAllowed) && (p.key !== "demo" || status.demo))
     const needsKey = providerMeta?.byok && status[provider] === false
     const fullName = result?.parsed_resume?.contact?.name || result?.contact?.name || ""
     const isCoverLetterOnlyAttempt = result?.attempt_type === "cover_letter_only"
 
     function refreshStatus() {
-        return api.get("/settings/env-status").then(res => setStatus(res.data)).catch(() => setStatus({}))
+        return api.get("/settings/env-status").then(res => {
+            setStatus(res.data)
+            // no key for the free tier: start on the offline demo instead of a dead option
+            if (res.data.default === false && res.data.demo) setProvider(p => (p === "default" ? "demo" : p))
+        }).catch(() => setStatus({}))
     }
 
     useEffect(() => {

@@ -314,6 +314,7 @@ def env_status():
     li_id = os.environ.get("LINKEDIN_CLIENT_ID", "")
     li_secret = os.environ.get("LINKEDIN_CLIENT_SECRET", "")
     return jsonify({
+        "replay": True,
         "groq": bool(groq_key) and not _is_key_placeholder(groq_key),
         "openrouter": bool(openrouter_key) and not _is_key_placeholder(openrouter_key),
         "linkedin": bool(li_id) and not _is_key_placeholder(li_id) and bool(li_secret) and not _is_key_placeholder(li_secret),

@@ -9,10 +9,9 @@ import {
 } from "../documents.js"
 import { fetchEngine } from "../engineClient.js"
 import { llmLimiter } from "../middleware/rateLimit.js"
-import { resolveProvider, ProviderError } from "../userKeys.js"
+import { resolveProvider, ProviderError, PROVIDER_CHOICES } from "../userKeys.js"
 
 const router = Router()
-const PROVIDER_CHOICES = new Set(["default", "gemini", "claude", "chatgpt", "local"])
 
 // prevent client from using own api
 function buildPayload(req, res, extra) {

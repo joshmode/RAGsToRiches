@@ -25,6 +25,8 @@ _PROVIDER_LIMITS = {
     "openrouter": int(os.environ.get("OPENROUTER_MAX_CONCURRENCY", "6")),
     "groq":       int(os.environ.get("GROQ_MAX_CONCURRENCY", "6")),
     "local":      int(os.environ.get("LOCAL_MAX_CONCURRENCY", "2")),
+    # offline recorded answers, see replay.py
+    "replay":     int(os.environ.get("REPLAY_MAX_CONCURRENCY", "8")),
 }
 _PROVIDER_LOCKS = {
     provider: threading.BoundedSemaphore(max(limit, 1))
@@ -39,6 +41,7 @@ _DEFAULT_MODELS = {
     "openrouter": os.environ.get("OPENROUTER_DEFAULT_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free"),
     "groq":       os.environ.get("GROQ_DEFAULT_MODEL", "qwen/qwen3.6-27b"),
     "local":      os.environ.get("LOCAL_DEFAULT_MODEL", "llama3"),
+    "replay":     "replay",
 }
 
 # if a pinned free-tier model gets pulled (as qwen did lol) fall back
@@ -323,6 +326,13 @@ def _dispatch(
                     )
                     if res.choices[0].message.content is None: raise EmptyResponseError("Groq returned no content.")
                     return res.choices[0].message.content
+
+                elif provider == "replay":
+                    # no key and no network: the demo and the end-to-end tests
+                    import replay
+                    text = replay.answer(user_prompt, system_prompt)
+                    if not text: raise EmptyResponseError("The replay provider has no answer for this prompt.")
+                    return text
 
                 elif provider == "local":
                     if not _is_local_endpoint(local_endpoint):

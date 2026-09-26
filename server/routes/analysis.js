@@ -7,13 +7,12 @@ import { requireAuth } from "../middleware/auth.js"
 import { canAccess, getAnalysis, getResume, mentorsFor } from "../access.js"
 import { pollLimiter, llmLimiter } from "../middleware/rateLimit.js"
 import { fetchEngine } from "../engineClient.js"
-import { resolveProvider, ProviderError } from "../userKeys.js"
+import { resolveProvider, ProviderError, PROVIDER_CHOICES } from "../userKeys.js"
 import { notifyMany } from "../notifications.js"
 import { saveRev } from "../documents.js"
 
 const router = Router()
 const ANALYSIS_CACHE_TTL_MINUTES = parseInt(process.env.ANALYSIS_CACHE_TTL_MINUTES || "60", 10)
-const PROVIDER_CHOICES = new Set(["default", "gemini", "claude", "chatgpt", "local"])
 
 // same inputs = same result, cache it
 function contentHash({ resumeId, jobDescription, provider, model, useCritic, localEndpoint }) {
