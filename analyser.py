@@ -859,13 +859,21 @@ def _run_analysis(
 
     t_retrieval = time.perf_counter()
     fw_cache_local: dict[str, list] = {}
+    retrieval_failed = False
     for sec, i, unit in jobs:
         text = unit["text"]
         if unit["eligible"] and unit["id"] not in strong:
             if text not in fw_cache_local:
-                fw_cache_local[text] = query_fw(text, n_results=3)
+                # guidance improves a rewrite but isn't needed for one, so a broken
+                # vector store costs the grounding, not the whole analysis
+                try:
+                    fw_cache_local[text] = [] if retrieval_failed else query_fw(text, n_results=3)
+                except Exception as fw_err:
+                    print(f"framework retrieval failed, rewriting without guidance: {fw_err}")
+                    retrieval_failed = True
+                    fw_cache_local[text] = []
     t_retrieval = time.perf_counter() - t_retrieval
-    emit("retrieved", retrieval_ms=int(t_retrieval * 1000))
+    emit("retrieved", retrieval_ms=int(t_retrieval * 1000), failed=retrieval_failed)
     join_jd(block=False)
 
     def _label_rw(sec, unit):
@@ -987,6 +995,7 @@ def _run_analysis(
         # match_pct, company and tailoring_tips, all from the one read
         **fit,
         "keyword_extraction_failed": jd_failed,
+        "retrieval_failed":    retrieval_failed,
         "score":               score,
         "warnings":            resume.warnings,
         "ocr_used":            resume.ocr_used,

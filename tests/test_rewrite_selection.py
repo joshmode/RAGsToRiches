@@ -78,3 +78,13 @@ def test_weak_bullets_still_get_rewritten(prompts):
     item = result["rewrites"]["EXPERIENCE"][0]
     assert item["rewritten"] == "Rewrote it"
     assert item["signals"]["action_verb"] == 0.0
+
+
+def test_a_broken_vector_store_costs_the_guidance_not_the_analysis(prompts, monkeypatch):
+    def broken(text, n_results=3):
+        raise ImportError("ChromaDB is required")
+
+    monkeypatch.setattr(analyser, "query_fw", broken)
+    result = _analyse({"EXPERIENCE": [f"- {WEAK}"]})
+    assert result["retrieval_failed"] is True
+    assert result["rewrites"]["EXPERIENCE"][0]["rewritten"] == "Rewrote it"
