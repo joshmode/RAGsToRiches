@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from "react"
+import { createContext, useContext, useState } from "react"
 import api from "../api/client"
 import { getUserRaw, setSession, clearSession } from "../api/session"
 
@@ -16,7 +16,7 @@ export function AuthProvider({ children }) {
             return null
         }
     })
-    const [loading, setLoading] = useState(false)
+    const [loading] = useState(false)
 
     async function login(username, password) {
         const res = await api.post("/auth/login", { username, password })

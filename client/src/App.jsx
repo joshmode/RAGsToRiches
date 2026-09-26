@@ -47,7 +47,6 @@ const RESUME_EXT_MIME = {
     md: "text/plain",
     zip: "application/zip",
 }
-const NAV_ITEMS = [...ALWAYS_NAV, ...MORE_NAV].map(i => i.key)
 
 const PIPELINE_STEPS = [
     { key: "upload", label: "Upload Resume", icon: UploadCloud },
@@ -80,13 +79,6 @@ function heatmapQuality(quality) {
     if (q >= 65) return { label: "Good", color: "#6FA37A" }
     if (q >= 40) return { label: "Fair", color: "#C17F3A" }
     return { label: "Needs Work", color: "#BC5B57" }
-}
-
-// traffic lights 
-function heatColor(quality) {
-    const normalised = Math.max(0, Math.min(100, ((quality || 0) - 33) / 0.67))
-    const hue = Math.round(normalised * 1.2)
-    return `hsl(${hue}, 70%, 45%)`
 }
 
 function getError(err) {
@@ -1892,7 +1884,6 @@ function CoverLetterWorkspace({ candidate, attempts, sent, onSent, unreadById = 
         : []
 
     // feedback from previous attempts at the same company only
-    const openCompanyKey = open ? (open.company || "").trim().toLowerCase() : ""
     const previousCompanyAttemptIds = open
         ? sameCo.filter(a => a.id !== openId).map(a => a.id)
         : []
