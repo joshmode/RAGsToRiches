@@ -24,8 +24,9 @@ export function requireAuth(req, res, next) {
     const token = header.split(" ")[1]
     try {
         const decoded = jwt.verify(token, JWT_SECRET)
-        // guests are purged well before their 7-day token expires 
-        if (decoded.is_guest && !getDb().prepare("SELECT 1 FROM users WHERE id = ?").get(decoded.id)) {
+        // guests are purged well before their 7-day token expires, and anyone can
+        // delete their account, so a valid signature isn't enough on its own
+        if (!getDb().prepare("SELECT 1 FROM users WHERE id = ?").get(decoded.id)) {
             return res.status(401).json({ error: "Invalid or expired token" })
         }
         req.user = decoded

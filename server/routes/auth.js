@@ -1,7 +1,7 @@
 import { Router } from "express"
 import bcrypt from "bcrypt"
 import crypto from "crypto"
-import { getDb, sweepGuests } from "../db.js"
+import { deleteUser, getDb, sweepGuests } from "../db.js"
 import { generateToken, requireAuth } from "../middleware/auth.js"
 import { guestLimiter } from "../middleware/rateLimit.js"
 
@@ -121,6 +121,21 @@ router.post("/guest", guestLimiter, async (req, res) => {
 
 router.get("/me", requireAuth, (req, res) => {
     res.json({ user: req.user })
+})
+
+// everything the account owns goes with it. a guest has no password to confirm
+router.delete("/account", requireAuth, async (req, res) => {
+    const db = getDb()
+    const row = db.prepare("SELECT id, password_hash, is_guest FROM users WHERE id = ?").get(req.user.id)
+    if (!row) return res.status(404).json({ error: "Account not found." })
+    if (!row.is_guest) {
+        const password = req.body?.password
+        if (typeof password !== "string" || !(await bcrypt.compare(password, row.password_hash))) {
+            return res.status(403).json({ error: "That password isn't right." })
+        }
+    }
+    deleteUser(db, row.id)
+    res.json({ ok: true })
 })
 
 export default router

@@ -312,24 +312,34 @@ export function sweepGuests(db) {
     ).all(`-${GUEST_RETENTION_HOURS} hours`)
 
     for (const { id: userId } of expired) {
-        deleteGuest(db, userId)
+        deleteUser(db, userId)
     }
+    return expired.length
 }
 
+// every row a user owns, for a guest's expiry or anyone deleting their account.
 // children before parents. subqueries not a precomputed id list
-function deleteGuest(db, userId) {
+export function deleteUser(db, userId) {
     const del = db.transaction(() => {
         db.prepare("DELETE FROM rewrite_decisions WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)").run(userId)
         db.prepare("DELETE FROM annotations WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
         db.prepare(
             "DELETE FROM revision_snapshots WHERE resume_id IN (SELECT id FROM resumes WHERE user_id = ?) OR analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)"
         ).run(userId, userId)
+        // a mentor's accepted rewrites are part of the candidate's documents now, so
+        // they stay there, unattributed, rather than vanish from someone else's cv
+        db.prepare(`
+            UPDATE generated_documents SET mentor_feedback_id = NULL
+            WHERE user_id != ? AND mentor_feedback_id IN (SELECT id FROM mentor_feedback WHERE mentor_id = ? AND status = 'accepted')
+        `).run(userId, userId)
+        db.prepare("UPDATE generated_documents SET author_id = NULL WHERE author_id = ? AND user_id != ?").run(userId, userId)
         db.prepare("DELETE FROM generated_documents WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
         db.prepare("DELETE FROM job_matches WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
         db.prepare("DELETE FROM evaluation_feedback WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
         db.prepare("DELETE FROM mentor_feedback WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR candidate_id = ? OR mentor_id = ?").run(userId, userId, userId)
         db.prepare("DELETE FROM notifications WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?) OR user_id = ?").run(userId, userId)
-        db.prepare("DELETE FROM session_participants WHERE user_id = ?").run(userId)
+        db.prepare("DELETE FROM session_participants WHERE user_id = ? OR session_id IN (SELECT id FROM review_sessions WHERE mentor_id = ?)").run(userId, userId)
+        db.prepare("DELETE FROM review_sessions WHERE mentor_id = ?").run(userId)
         db.prepare("DELETE FROM user_api_keys WHERE user_id = ?").run(userId)
         db.prepare("DELETE FROM analysis_jobs WHERE user_id = ? OR resume_id IN (SELECT id FROM resumes WHERE user_id = ?)").run(userId, userId)
         db.prepare("DELETE FROM job_descriptions WHERE user_id = ?").run(userId)
