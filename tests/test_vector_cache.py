@@ -17,13 +17,16 @@ class _FakeCollection:
 
     def __init__(self, size=8):
         self.queries = 0
+        self.by_embedding = 0
         self._size = size
 
     def count(self):
         return self._size
 
-    def query(self, query_texts, n_results, include):
+    def query(self, n_results, include, query_texts=None, query_embeddings=None):
         self.queries += 1
+        if query_embeddings is not None:
+            self.by_embedding += 1
         return {
             "documents": [["framework doc"] * n_results],
             "metadatas": [[{"framework": "STAR", "category": "structure"}] * n_results],
@@ -195,3 +198,88 @@ def test_dot_of_identical_unit_vectors_is_one():
 
 def test_dot_of_mismatched_lengths_is_zero():
     assert vector_db._dot([1.0, 0.0], [1.0, 0.0, 0.0]) == 0.0
+
+
+# ------------------------------------------------------------- one embedding
+
+def test_a_miss_reuses_the_lookup_embedding(monkeypatch, wired):
+    embedded = []
+    real = vector_db._embed
+
+    def counting(text):
+        embedded.append(text)
+        return real(text)
+
+    monkeypatch.setattr(vector_db, "_embed", counting)
+    vector_db.query_fw("Built the checkout system", n_results=2)
+    assert embedded == ["Built the checkout system"]
+    assert wired.by_embedding == 1  # chroma got the vector, not the text to embed again
+
+
+def test_without_embeddings_the_collection_embeds_the_text(monkeypatch, wired):
+    monkeypatch.setattr(vector_db, "_embed", lambda text: None)
+    vector_db.query_fw("Built the checkout system", n_results=2)
+    assert wired.queries == 1
+    assert wired.by_embedding == 0
+
+
+# ------------------------------------------------------------ guide syncing
+
+class _StoredGuides:
+    """Just enough of a chroma collection to sync against."""
+
+    def __init__(self, docs=None):
+        self.docs = dict(docs or {})
+        self.upserted = []
+        self.deleted = []
+
+    def get(self, include):
+        ids = list(self.docs)
+        return {
+            "ids": ids,
+            "documents": [self.docs[i][0] for i in ids],
+            "metadatas": [self.docs[i][1] for i in ids],
+        }
+
+    def upsert(self, ids, documents, metadatas):
+        self.upserted += ids
+        for i, doc, meta in zip(ids, documents, metadatas):
+            self.docs[i] = (doc, meta)
+
+    def delete(self, ids):
+        self.deleted += ids
+        for i in ids:
+            self.docs.pop(i, None)
+
+
+def test_an_empty_collection_is_seeded():
+    col = _StoredGuides()
+    vector_db._sync_frameworks(col)
+    assert sorted(col.upserted) == sorted(f["id"] for f in vector_db.FRAMEWORKS)
+
+
+def test_an_up_to_date_collection_is_left_alone():
+    col = _StoredGuides({f["id"]: (f["document"], f["metadata"]) for f in vector_db.FRAMEWORKS})
+    vector_db._sync_frameworks(col)
+    assert col.upserted == []
+    assert col.deleted == []
+
+
+def test_an_edited_guide_reaches_an_existing_collection():
+    docs = {f["id"]: (f["document"], f["metadata"]) for f in vector_db.FRAMEWORKS}
+    docs["google_xyz"] = ("an old version of the guide", docs["google_xyz"][1])
+    docs["retired_guide"] = ("no longer in FRAMEWORKS", {"framework": "old", "category": "old"})
+    col = _StoredGuides(docs)
+    vector_db._sync_frameworks(col)
+    assert col.upserted == ["google_xyz"]
+    assert col.deleted == ["retired_guide"]
+
+
+def test_no_guide_quotes_an_example_figure():
+    # a figure in an example reads as permission to invent one
+    import claims
+    for guide in vector_db.FRAMEWORKS:
+        if guide["id"] == "education_section_guide":
+            continue  # GPA and CAP thresholds are rules, not example results
+        text = guide["document"].replace(guide["metadata"]["framework"], "")  # "Rule of 3" is a name
+        assert claims.quantitative_claims(text) == set(), guide["id"]
