@@ -32,7 +32,8 @@ export function RevisionTimeline({ analysisId, documentType, viewerRole = "candi
         })
         for (const v of (data.versions || []).filter(v => v.source === "user")) {
             out.push({
-                key: `user-${v.id}`, at: v.created_at, kind: "user",
+                // one sitting of autosaves is one version, shown at its last save
+                key: `user-${v.id}`, at: v.updated_at || v.created_at, kind: "user",
                 title: viewerRole === "candidate" ? "Your edit" : `${v.author_name || "Candidate"}'s edit`, body: v.content,
             })
         }

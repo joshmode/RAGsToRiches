@@ -1,6 +1,7 @@
 import { getDb } from "./db.js"
 
-// append-only, every revision keeps its row. read through effective()
+// append-only, every revision keeps its row, except that one sitting of autosaves
+// folds into a single "your edit". read through effective()
 
 export const TYPES = new Set(["cv", "cover_letter"])
 
@@ -32,14 +33,29 @@ export function getCompany(analysisId, explicit = "") {
     return prev ? String(prev.company || "").slice(0, 200) : ""
 }
 
-// append-only, no update/delete path on purpose
+// append-only, no delete path on purpose. coalesce is for the editor's autosave:
+// typing used to add a revision every 600ms, now a run of the same person's saves
+// updates their last edit while nothing else has been saved in between
 export function saveRev({
     analysisId, ownerId, type, content,
     source = "ai", authorId = null, mentorFeedbackId = null, comment = "", company = "",
+    coalesce = false,
 }) {
     if (!analysisId || !ownerId || !TYPES.has(type)) return null
     // only a cover letter has a company
     const co = type === "cover_letter" ? getCompany(analysisId, company) : ""
+    if (coalesce) {
+        const latest = getDb().prepare(`
+            SELECT id, source, author_id, COALESCE(updated_at, created_at) >= datetime('now', '-10 minutes') AS recent
+            FROM generated_documents WHERE analysis_id = ? AND user_id = ? AND document_type = ?
+            ORDER BY created_at DESC, id DESC LIMIT 1
+        `).get(analysisId, ownerId, type)
+        if (latest && latest.recent && latest.source === source && latest.author_id === authorId) {
+            getDb().prepare("UPDATE generated_documents SET content = ?, company = ?, updated_at = datetime('now') WHERE id = ?")
+                .run(String(content ?? ""), co, latest.id)
+            return latest.id
+        }
+    }
     const row = getDb().prepare(`
         INSERT INTO generated_documents
             (analysis_id, user_id, document_type, content, company, source, author_id, mentor_feedback_id, comment, created_at)
@@ -107,7 +123,7 @@ export function revs(analysisId, ownerId, type) {
     if (!analysisId || !ownerId || !TYPES.has(type)) return []
     return getDb().prepare(`
         SELECT gd.id, gd.content, gd.company, gd.source, gd.author_id, gd.mentor_feedback_id,
-               gd.comment, gd.created_at, u.display_name AS author_name, u.role AS author_role
+               gd.comment, gd.created_at, gd.updated_at, u.display_name AS author_name, u.role AS author_role
         FROM generated_documents gd
         LEFT JOIN users u ON u.id = gd.author_id
         WHERE gd.analysis_id = ? AND gd.user_id = ? AND gd.document_type = ?

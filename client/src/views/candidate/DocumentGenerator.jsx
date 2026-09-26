@@ -47,7 +47,7 @@ export function DocumentGenerator({ type, result, provider, localEndpoint, decis
             } catch {
                 setSaveState("error")
             }
-        }, 600)
+        }, 1500)
         return () => clearTimeout(t)
     }, [text])
 

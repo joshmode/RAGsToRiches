@@ -174,11 +174,11 @@ router.post("/save", requireAuth, (req, res) => {
     const current = effective(analysisId, req.user.id, type)
     if (current && current.content === content) return res.json({ ok: true, unchanged: true })
 
-    // a candidate edit is a real version
+    // a candidate edit is a real version, one per sitting rather than per pause in typing
     saveRev({
         analysisId, ownerId: req.user.id, type,
         content, source: "user", authorId: req.user.id,
-        company: req.body.company,
+        company: req.body.company, coalesce: true,
     })
     res.json({ ok: true })
 })

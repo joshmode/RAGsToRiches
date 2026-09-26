@@ -262,6 +262,9 @@ function initDb(db) {
     if (!cols.includes("comment")) {
         db.exec("ALTER TABLE generated_documents ADD COLUMN comment TEXT DEFAULT ''")
     }
+    if (!cols.includes("updated_at")) {
+        db.exec("ALTER TABLE generated_documents ADD COLUMN updated_at TEXT")
+    }
     db.exec("CREATE INDEX IF NOT EXISTS idx_generated_documents_version ON generated_documents(analysis_id, document_type, created_at)")
 
     // one row per decision so a single accept can upsert. older databases could
