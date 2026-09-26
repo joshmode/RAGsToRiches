@@ -15,7 +15,7 @@ from llm_output import parse_json as _parse_json
 from prompt_registry import prompt_set_version, prompt_versions, register
 from vector_db import query_fw
 from parser import ParsedResume
-from router import llm_call
+from router import DeadlineExceeded, deadline, llm_call, submit, time_left
 from scoring import action_verb_strength, bullet_signals, is_strong, score_bullets
 
 load_dotenv()
@@ -25,6 +25,9 @@ _CHUNK_SIZE = max(1, int(os.environ.get("REWRITE_CHUNK_SIZE", "6")))
 
 # a bullet the rubric already rates as strong is left alone unless this is set
 _REWRITE_STRONG_BULLETS = os.environ.get("REWRITE_STRONG_BULLETS", "false").lower() == "true"
+
+# one time budget for a whole analysis, every retry and fallback included
+_ANALYSIS_DEADLINE_SECONDS = float(os.environ.get("ANALYSIS_DEADLINE_SECONDS", "240"))
 
 # banned ai jargon that make resumes sound generic
 _BANNED_WORDS = (
@@ -339,13 +342,21 @@ def rewrite_item(
 
     except Exception as e:
         print(f"bullet rewrite bypassed: {e}")
-        return {
-            "original":       bullet,
-            "rewritten":      bullet,
-            "reasoning":      "Rewrite skipped due to model formatting failure.",
-            "framework_used": "error",
-            "severity":       "red"
-        }
+        return _skipped(bullet, e)
+
+
+def _skipped(bullet: str, err: Exception) -> dict:
+    reason = (
+        "Rewrite skipped: the analysis ran out of time." if isinstance(err, DeadlineExceeded)
+        else "Rewrite skipped: the model didn't return a usable answer."
+    )
+    return {
+        "original":       bullet,
+        "rewritten":      bullet,
+        "reasoning":      reason,
+        "framework_used": "error",
+        "severity":       "red"
+    }
 
 
 _ALIGN_WORD_RE = re.compile(r'[a-z0-9][a-z0-9+#.]*')
@@ -413,7 +424,7 @@ def _rewrite_each(
     """One call per bullet, side by side. The provider semaphore still caps them."""
     with ThreadPoolExecutor(max_workers=min(4, len(items))) as pool:
         futures = [
-            pool.submit(rewrite_item, text, fws, provider, local_endpoint, use_critic, model=model, api_key=api_key)
+            submit(pool, rewrite_item, text, fws, provider, local_endpoint, use_critic, model=model, api_key=api_key)
             for text, fws in items
         ]
         return [future.result() for future in futures]
@@ -468,6 +479,11 @@ def rewrite_chunk(
             results.append(_finalise(item_result, text))
 
     except Exception as e:
+        left = time_left()
+        if isinstance(e, DeadlineExceeded) or (left is not None and left < 5):
+            # one call per bullet would only fail the same way, and slower
+            print(f"chunk rewrite ran out of time ({len(items)} bullets): {e}")
+            return [_skipped(text, DeadlineExceeded()) for text, _fws in items]
         print(f"chunk rewrite failed ({len(items)} bullets), falling back to per-bullet calls: {e}")
         return _rewrite_each(items, provider, local_endpoint, use_critic, model, api_key)
 
@@ -762,7 +778,24 @@ def analyse(
     supplied, so the existing request/response path is unaffected. Events are
     emitted from the collecting thread, never from a worker, so the callback does
     not need to be thread-safe.
+
+    Every model call inside runs against one deadline (ANALYSIS_DEADLINE_SECONDS),
+    so retries and fallbacks can't stack past what the client waits for.
     """
+    with deadline(_ANALYSIS_DEADLINE_SECONDS):
+        return _run_analysis(resume, job_description, provider, local_endpoint, use_critic, model, api_key, progress)
+
+
+def _run_analysis(
+    resume: ParsedResume,
+    job_description: str,
+    provider: str,
+    local_endpoint: str,
+    use_critic: bool,
+    model: str,
+    api_key: str,
+    progress: Callable[[dict], None] | None,
+) -> dict:
     def emit(stage: str, **fields: Any) -> None:
         if progress is None:
             return
@@ -783,7 +816,7 @@ def analyse(
         return profile, time.perf_counter() - started
 
     jd_pool = ThreadPoolExecutor(max_workers=1)
-    jd_future = jd_pool.submit(_read_jd) if job_description.strip() else None
+    jd_future = submit(jd_pool, _read_jd) if job_description.strip() else None
     jd_read: dict = {}
     jd_failed = False
     t_kw = 0.0
@@ -880,7 +913,7 @@ def analyse(
     emit("rewriting", chunks=len(chunks), bullets=len(eligible_jobs), workers=workers)
     t_rewrite = time.perf_counter()
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_do_chunk, chunk): idx for idx, chunk in enumerate(chunks)}
+        futures = {submit(pool, _do_chunk, chunk): idx for idx, chunk in enumerate(chunks)}
         for fut in as_completed(futures):
             chunk_idx = futures[fut]
             try:
@@ -892,7 +925,7 @@ def analyse(
                     rw = {
                         "original": unit["text"], "rewritten": unit["text"],
                         "reasoning": "Rewrite skipped due to processing error.",
-                        "framework_used": "none",
+                        "framework_used": "error",
                         "id": unit["id"], "section": sec,
                         "line_indices": unit["line_indices"],
                         "highlight_text": unit["text"],
@@ -960,6 +993,9 @@ def analyse(
         "critic":              critic_counts,
         "claim_guard":         guard_counts,
         "already_strong":      len(strong),
+        "rewrite_skipped":     sum(
+            1 for items in rewrites.values() for item in items if item.get("framework_used") == "error"
+        ),
         "prompt_versions":     prompt_versions(),
         "prompt_set_version":  prompt_set_version(),
     }

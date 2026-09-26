@@ -3,6 +3,8 @@ import time
 import threading
 import ipaddress
 import socket
+import contextvars
+from contextlib import contextmanager
 from urllib.parse import urlparse
 import requests
 
@@ -43,6 +45,38 @@ _DEFAULT_MODELS = {
 _FALLBACK_MODELS = {
     "openrouter": os.environ.get("OPENROUTER_FALLBACK_MODEL", "openrouter/free"),
 }
+
+
+# One analysis gets one time budget. The SDKs retry on their own, the loop below
+# retries, and openrouter has a fallback model. Stacked, a single failing call
+# could outlast the client's own ten minute limit. Every attempt now has to fit
+# in what's left of the budget, and nothing starts once it's spent.
+_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar("llm_deadline", default=None)
+
+
+class DeadlineExceeded(TimeoutError):
+    """The analysis ran out of time, so no further model call is worth starting."""
+
+
+@contextmanager
+def deadline(seconds: float):
+    """Bound every llm_call inside the block, retries and fallbacks included."""
+    token = _deadline.set(time.monotonic() + seconds)
+    try:
+        yield
+    finally:
+        _deadline.reset(token)
+
+
+def time_left() -> float | None:
+    end = _deadline.get()
+    return None if end is None else end - time.monotonic()
+
+
+def submit(pool, fn, *args, **kwargs):
+    """pool.submit that carries the deadline into the worker thread. A thread pool
+    doesn't copy context variables on its own."""
+    return pool.submit(contextvars.copy_context().run, fn, *args, **kwargs)
 
 
 def _is_key_placeholder(value: str) -> bool:
@@ -120,6 +154,9 @@ def llm_call(
         fallback_model = _FALLBACK_MODELS.get(provider, "")
         if not fallback_model or fallback_model == resolved_model:
             raise
+        left = time_left()
+        if isinstance(primary_err, DeadlineExceeded) or (left is not None and left < 5):
+            raise
         print(f"{provider} call failed on '{resolved_model}' after {max_retries} attempt(s), "
               f"falling back to '{fallback_model}': {primary_err}")
         return _dispatch(provider, user_prompt, system_prompt, fallback_model,
@@ -141,6 +178,12 @@ def _dispatch(
     last_err = None
 
     for attempt in range(max_retries):
+        left = time_left()
+        if left is not None and left <= 1:
+            if last_err is not None:
+                break
+            raise DeadlineExceeded("The analysis ran out of time before this call could start.")
+        call_timeout = timeout if left is None else max(1.0, min(timeout, left))
         try:
             with _PROVIDER_LOCKS[provider]:
                 if provider == "gemini":
@@ -150,7 +193,11 @@ def _dispatch(
                     key = _resolve_key("Gemini", "GEMINI_API_KEY", api_key)
                     client = genai.Client(
                         api_key=key,
-                        http_options=types.HttpOptions(timeout=timeout * 1000),
+                        http_options=types.HttpOptions(
+                            timeout=int(call_timeout * 1000),
+                            # this loop does the retrying
+                            retry_options=types.HttpRetryOptions(attempts=1),
+                        ),
                     )
                     mdl = model
 
@@ -176,7 +223,7 @@ def _dispatch(
                     import anthropic
                     key = _resolve_key("Claude", "ANTHROPIC_API_KEY", api_key)
                     mdl = model
-                    client = anthropic.Anthropic(api_key=key, timeout=timeout)
+                    client = anthropic.Anthropic(api_key=key, timeout=call_timeout, max_retries=0)
                     msg = client.messages.create(
                         model=mdl,
                         max_tokens=max_tokens,
@@ -190,7 +237,7 @@ def _dispatch(
                     import openai
                     key = _resolve_key("ChatGPT", "OPENAI_API_KEY", api_key)
                     mdl = model
-                    client = openai.OpenAI(api_key=key, timeout=timeout)
+                    client = openai.OpenAI(api_key=key, timeout=call_timeout, max_retries=0)
                     res = client.chat.completions.create(
                         model=mdl,
                         max_tokens=max_tokens,
@@ -207,7 +254,7 @@ def _dispatch(
                     import openai
                     key = _resolve_key("OpenRouter", "OPENROUTER_API_KEY", api_key)
                     mdl = model
-                    client = openai.OpenAI(api_key=key, base_url="https://openrouter.ai/api/v1", timeout=timeout)
+                    client = openai.OpenAI(api_key=key, base_url="https://openrouter.ai/api/v1", timeout=call_timeout, max_retries=0)
                     res = client.chat.completions.create(
                         model=mdl,
                         max_tokens=max_tokens,
@@ -224,7 +271,7 @@ def _dispatch(
                     import openai
                     key = _resolve_key("Groq", "GROQ_API_KEY", api_key)
                     mdl = model
-                    client = openai.OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1", timeout=timeout)
+                    client = openai.OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1", timeout=call_timeout, max_retries=0)
                     res = client.chat.completions.create(
                         model=mdl,
                         max_tokens=max_tokens,
@@ -246,7 +293,7 @@ def _dispatch(
                         "stream": False,
                         "options": {"num_predict": max_tokens}
                     }
-                    res = requests.post(local_endpoint, json=payload, timeout=timeout)
+                    res = requests.post(local_endpoint, json=payload, timeout=call_timeout)
                     res.raise_for_status()
                     content = res.json().get("message", {}).get("content")
                     if content is None: raise EmptyResponseError("Local model returned no content.")
@@ -257,6 +304,10 @@ def _dispatch(
             last_err = e
             failure = classify(e)
             delay = backoff_seconds(failure, attempt) if attempt < max_retries - 1 else None
+            left = time_left()
+            if delay is not None and left is not None and delay >= left - 1:
+                # no time to wait and try again inside the analysis budget
+                delay = None
             if delay is None:
                 # Terminal, or out of attempts. Retrying a bad key or a malformed
                 # request just burns latency for an identical failure.
