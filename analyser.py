@@ -31,15 +31,21 @@ _BANNED_WORDS = (
 )
 
 
+def _kw_pattern(kw: str) -> re.Pattern:
+    """the keyword as a whole token. \\b needs a word character on one side, so
+    "C++", "C#" and ".NET" never matched, and "C" matched inside "C++" """
+    return re.compile(r'(?<![a-z0-9])' + re.escape(kw.lower().strip()) + r'(?![a-z0-9+#])')
+
+
 def _kw_in_resume(kw: str, resume_lower: str) -> bool:
-    return bool(re.search(r'\b' + re.escape(kw.lower()) + r'\b', resume_lower))
+    return bool(_kw_pattern(kw).search(resume_lower))
 
 
 def kw_freqs(jd_keywords: list[str], resume_text: str) -> dict[str, int]:
     lower = resume_text.lower()
     freqs = {}
     for kw in jd_keywords:
-        hits = re.findall(r'\b' + re.escape(kw.lower()) + r'\b', lower)
+        hits = _kw_pattern(kw).findall(lower)
         if hits:
             freqs[kw] = len(hits)
     return freqs

@@ -266,3 +266,15 @@ def test_qualitative_critic_normalises_an_unknown_kind(monkeypatch):
     )
     out = analyser.run_qualitative_critic([("Helped X", "Led X")], "gemini", "")
     assert out[0]["kind"] == "role"
+
+
+# -------------------------------------------------------------- keyword match
+
+def test_keywords_ending_in_symbols_are_found():
+    text = "Shipped services in C++ and C#, then ported them to .NET"
+    assert analyser.kw_freqs(["C++", "C#", ".NET"], text) == {"C++": 1, "C#": 1, ".NET": 1}
+    assert all(analyser._kw_in_resume(kw, text.lower()) for kw in ("C++", "C#", ".NET"))
+
+
+def test_a_short_keyword_does_not_match_inside_a_longer_one():
+    assert analyser.kw_freqs(["C", "Java"], "Wrote C++ and JavaScript") == {}
