@@ -68,6 +68,12 @@ def test_the_sample_parses_into_its_sections(parsed):
     assert parsed["warnings"] == []
 
 
+def test_sections_keep_the_resume_order(engine, parsed):
+    assert list(parsed["sections"]) == ["SUMMARY", "EXPERIENCE", "PROJECTS", "EDUCATION", "SKILLS"]
+    result, _items = _analyse(engine, parsed)
+    assert list(result["sections"]) == list(parsed["sections"])
+
+
 def test_the_guards_catch_the_recorded_fabrications(engine, parsed):
     result, items = _analyse(engine, parsed)
     assert items[MIGRATION]["verb_escalation"]["to"] == "led"

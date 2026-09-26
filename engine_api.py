@@ -35,6 +35,9 @@ import job_fit
 import feedback
 
 app = Flask(__name__)
+# jsonify sorts keys by default, which put EDUCATION before EXPERIENCE and lost
+# the resume's own section order in every response
+app.json.sort_keys = False
 
 # 25MB file limit
 app.config["MAX_CONTENT_LENGTH"] = 40 * 1024 * 1024
