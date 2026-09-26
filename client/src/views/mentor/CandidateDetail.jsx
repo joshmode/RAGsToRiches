@@ -346,17 +346,17 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
                 {analysis && !Object.keys(sections).length && <div className="card muted">No sections were extracted for this analysis.</div>}
                 {analysis && Object.entries(sections).map(([name, lines], idx) => {
                     const sectionText = lines.join("\n")
-                    const sectionEdit = sentByKey[`section_edit:${analysis.id}:${name}`]
+                    const sectionFeedback = sentByKey[`section_edit:${analysis.id}:${name}`]
                     return <details className="card" key={name} open={idx === 0}>
                         <summary>{name}</summary>
                         {/* a second editing level */}
                         <button className="pill edit-section-pill" onClick={() => startSectionEdit(name)}><PenSquare size={12} /> {sectionEdit === name ? "Cancel Section Edit" : "Edit Section"}</button>
                         {/* the extracted section is struck through while the mentor's rewrite is
                             the live proposal, and restored the moment it is dismissed */}
-                        <pre className={`section-pre ${editSupersedes(sectionEdit) ? "section-pre-superseded" : ""}`}>{sectionText}</pre>
-                        {sectionEdit && <>
-                            <MentorSuggestionBlock baseText={sectionText} feedback={sectionEdit} viewerRole="mentor" />
-                            {sectionEdit.status === "dismissed" && <button className="pill suggest-edit-pill" onClick={() => startSectionEdit(name, sectionEdit)}>
+                        <pre className={`section-pre ${editSupersedes(sectionFeedback) ? "section-pre-superseded" : ""}`}>{sectionText}</pre>
+                        {sectionFeedback && <>
+                            <MentorSuggestionBlock baseText={sectionText} feedback={sectionFeedback} viewerRole="mentor" />
+                            {sectionFeedback.status === "dismissed" && <button className="pill suggest-edit-pill" onClick={() => startSectionEdit(name, sectionFeedback)}>
                                 <RotateCw size={12} /> Revise &amp; resend
                             </button>}
                         </>}
