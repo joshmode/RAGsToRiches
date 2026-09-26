@@ -1181,6 +1181,11 @@ def gen_cv(
         raise
 
 
+def _long_date(day: date) -> str:
+    """"September 27, 2026". strftime's %-d isn't supported on Windows"""
+    return f"{day:%B} {day.day}, {day.year}"
+
+
 def gen_cover_letter(
     resume: ParsedResume,
     job_description: str,
@@ -1217,7 +1222,7 @@ def gen_cover_letter(
     )
 
     usr_prompt = (
-        f"DATE TO USE: {date.today().strftime('%B %-d, %Y')}\n\n" +
+        f"DATE TO USE: {_long_date(date.today())}\n\n" +
         jd_block +
         f"CANDIDATE RESUME:\n{resume_text}\n\n"
         "Generate the complete cover letter in Markdown format. "
