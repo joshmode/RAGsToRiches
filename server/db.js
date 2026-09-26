@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
+import { summaryOf } from "./summary.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -262,6 +263,29 @@ function initDb(db) {
         db.exec("ALTER TABLE generated_documents ADD COLUMN comment TEXT DEFAULT ''")
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_generated_documents_version ON generated_documents(analysis_id, document_type, created_at)")
+
+    // what history lists need, kept beside results_json (see summary.js)
+    cols = db.prepare("PRAGMA table_info(analyses)").all().map(c => c.name)
+    const summaryCols = { company: "TEXT DEFAULT ''", match_pct: "INTEGER", score_json: "TEXT DEFAULT ''", timing_json: "TEXT DEFAULT ''" }
+    for (const [name, type] of Object.entries(summaryCols)) {
+        if (!cols.includes(name)) db.exec(`ALTER TABLE analyses ADD COLUMN ${name} ${type}`)
+    }
+    backfillSummaries(db)
+}
+
+// once per row: parse the blob a last time and keep what the lists read
+export function backfillSummaries(db) {
+    const rows = db.prepare("SELECT id, results_json FROM analyses WHERE score_json = '' OR score_json IS NULL").all()
+    if (!rows.length) return
+    const update = db.prepare("UPDATE analyses SET company = ?, match_pct = ?, score_json = ?, timing_json = ? WHERE id = ?")
+    db.transaction(() => {
+        for (const row of rows) {
+            let results = {}
+            try { results = JSON.parse(row.results_json) } catch {}
+            const summary = summaryOf(results)
+            update.run(summary.company, summary.match_pct, summary.score_json, summary.timing_json, row.id)
+        }
+    })()
 }
 
 const GUEST_RETENTION_HOURS = parseInt(process.env.GUEST_RETENTION_HOURS || "24", 10)

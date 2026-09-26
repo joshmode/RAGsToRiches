@@ -137,16 +137,15 @@ export function CoverLetterWorkspace({ candidate, attempts, sent, onSent, unread
         <div className="cl-workspace-left">
             <details className="card mentor-history-card" open={historyOpen} onToggle={e => setHistoryOpen(e.currentTarget.open)}>
                 <summary>Cover Letter History</summary>
-                <div className="mentor-history-table-wrap"><table><thead><tr><th>Company</th><th>Attempt</th><th>Job Match</th><th>Keyword Match</th><th>Date</th><th /></tr></thead><tbody>
+                <div className="mentor-history-table-wrap"><table><thead><tr><th>Company</th><th>Attempt</th><th>Job Fit</th><th>Date</th><th /></tr></thead><tbody>
                     {attempts.map(a => <tr key={a.id} className={`${openId === a.id ? "mentor-history-row-open" : ""} ${unreadById[a.id] ? "history-row-unread-mentor" : ""}`}>
                         <td><Building2 size={12} /> {a.company || "Company not detected"}</td>
                         <td>#{clNumberOf[a.id]}</td>
-                        <td>{a.job_match_pct != null ? `${a.job_match_pct}%` : "—"}</td>
-                        <td>{a.keyword_match_pct != null ? `${a.keyword_match_pct}%` : "—"}</td>
+                        <td>{a.match_pct != null ? `${a.match_pct}%` : "—"}</td>
                         <td>{formatDateTime(a.created_at)}</td>
                         <td><button className="btn-secondary btn-small" onClick={() => openAttempt(a.id)}>Open</button></td>
                     </tr>)}
-                    {!attempts.length && <tr><td colSpan={6} className="muted">No cover letters yet.</td></tr>}
+                    {!attempts.length && <tr><td colSpan={5} className="muted">No cover letters yet.</td></tr>}
                 </tbody></table></div>
             </details>
             {error && <p className="warning-strip">{error}</p>}

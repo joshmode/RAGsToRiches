@@ -4,12 +4,12 @@ import crypto from "crypto"
 import fetch from "node-fetch"
 import { getDb } from "../db.js"
 import { requireAuth } from "../middleware/auth.js"
-import { canAccess, getAnalysis, getResume, mentorsFor } from "../access.js"
+import { canAccess, getAnalysis, getResume } from "../access.js"
 import { pollLimiter, llmLimiter } from "../middleware/rateLimit.js"
 import { fetchEngine } from "../engineClient.js"
 import { resolveProvider, ProviderError, PROVIDER_CHOICES } from "../userKeys.js"
-import { notifyMany } from "../notifications.js"
 import { saveRev } from "../documents.js"
+import { saveAnalysis, updateResults } from "../analyses.js"
 
 const router = Router()
 const ANALYSIS_CACHE_TTL_MINUTES = parseInt(process.env.ANALYSIS_CACHE_TTL_MINUTES || "60", 10)
@@ -132,24 +132,17 @@ async function run(engineUrl, jobId, payload) {
         const results = await resp.json()
         results.parsed_resume = payload.resume_json
         results.job_description = payload.job_description || ""
-        const score = typeof results.score === "object" ? results.score.total || 0 : results.score || 0
-        const hash = contentHash({
-            fileKey: payload.file_key || `resume:${payload.resume_id}`, jobDescription: payload.job_description,
-            provider: payload.provider, useCritic: payload.use_critic, localEndpoint: payload.local_endpoint,
+        const analysisId = saveAnalysis({
+            userId: payload.user_id, resumeId: payload.resume_id, results,
+            jobDescription: payload.job_description, provider: payload.provider,
+            hash: contentHash({
+                fileKey: payload.file_key || `resume:${payload.resume_id}`, jobDescription: payload.job_description,
+                provider: payload.provider, useCritic: payload.use_critic, localEndpoint: payload.local_endpoint,
+            }),
         })
-        const row = db.prepare(
-            "INSERT INTO analyses (resume_id, user_id, results_json, job_description, provider, model, score_total, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
-        ).run(
-            payload.resume_id, payload.user_id, JSON.stringify(results), payload.job_description || "",
-            payload.provider || "", results.model || "", score, hash,
-        )
-        results.analysis_id = row.lastInsertRowid
-        results.resume_id = payload.resume_id
-        db.prepare("UPDATE analyses SET results_json = ? WHERE id = ?").run(JSON.stringify(results), row.lastInsertRowid)
         db.prepare(
             "UPDATE analysis_jobs SET status = 'completed', analysis_id = ?, error = '', updated_at = datetime('now') WHERE id = ?"
-        ).run(row.lastInsertRowid, jobId)
-        notifyMany(mentorsFor(payload.user_id), { analysisId: row.lastInsertRowid, attemptType: "resume_analysis", eventType: "new_attempt" })
+        ).run(analysisId, jobId)
     } catch (err) {
         db.prepare(
             "UPDATE analysis_jobs SET status = 'failed', error = ?, updated_at = datetime('now') WHERE id = ?"
@@ -355,7 +348,6 @@ router.post("/quick-cover-letter", requireAuth, llmLimiter, async (req, res) => 
         // the one extra thing this workflow gets
         const gap = await kwGap(engineUrl, resume_json, job_description, engineProvider, local_endpoint, apiKey)
 
-        const db = getDb()
         // only what's derivable without analyse(). same shape as a real one so the sidebar works
         const stored = {
             contact: resume_json?.contact || {},
@@ -363,23 +355,19 @@ router.post("/quick-cover-letter", requireAuth, llmLimiter, async (req, res) => 
             parsed_resume: resume_json,
             job_description: job_description || "",
             attempt_type: "cover_letter_only",
+            model: data.model || "",
             ...gap,
         }
-        const row = db.prepare(
-            "INSERT INTO analyses (resume_id, user_id, results_json, job_description, provider, model, score_total, content_hash, attempt_type, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, '', 'cover_letter_only', datetime('now'))"
-        ).run(resumeId, req.user.id, JSON.stringify(stored), job_description || "", provider || "", data.model || "")
-        const analysisId = row.lastInsertRowid
-        stored.analysis_id = analysisId
-        stored.resume_id = resumeId
-        db.prepare("UPDATE analyses SET results_json = ? WHERE id = ?").run(JSON.stringify(stored), analysisId)
+        const analysisId = saveAnalysis({
+            userId: req.user.id, resumeId, results: stored, jobDescription: job_description,
+            provider, attemptType: "cover_letter_only",
+        })
         // company off the jd beats the client
         saveRev({
             analysisId, ownerId: req.user.id, type: "cover_letter",
             content: data.cover_letter_text || "", source: "ai", authorId: req.user.id,
             company: gap.company || company,
         })
-        notifyMany(mentorsFor(req.user.id), { analysisId, attemptType: "cover_letter_only", eventType: "new_attempt" })
-
         res.json({ analysis_id: analysisId, cover_letter_text: data.cover_letter_text || "", results: stored })
     } catch (err) {
         res.status(500).json({ error: "Cover letter generation failed. Please try again." })
@@ -439,8 +427,7 @@ router.post("/:id/refresh-jd", requireAuth, llmLimiter, async (req, res) => {
         const resume = getResume(row.resume_id, req.user.id)
         const hash = row.attempt_type === "cover_letter_only" || !resume ? row.content_hash
             : contentHash({ fileKey: fileKey(resume), jobDescription: jd, provider, useCritic: false, localEndpoint: local_endpoint })
-        db.prepare("UPDATE analyses SET job_description = ?, content_hash = ?, results_json = ? WHERE id = ?")
-            .run(jd, hash, JSON.stringify(out), analysisId)
+        updateResults(analysisId, out, { jobDescription: jd, hash })
         // real new version, the old letter stays in history
         saveRev({
             analysisId, ownerId: req.user.id, type: "cover_letter",
@@ -487,30 +474,22 @@ router.post("/highlight", requireAuth, pollLimiter, async (req, res) => {
 
 router.get("/history", requireAuth, (req, res) => {
     const db = getDb()
+    // summary columns only, the results blobs stay on disk
     const rows = db.prepare(
-        "SELECT id, resume_id, score_total, provider, model, attempt_type, results_json, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
+        "SELECT id, resume_id, score_total, provider, model, attempt_type, company, match_pct, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
     ).all(req.user.id)
 
-    res.json(rows.map(r => {
-        // already in results_json so return immediately 
-        let results = {}
-        try { results = JSON.parse(r.results_json) } catch {}
-        const keywords = results.jd_keywords || []
-        const missing = results.missing_keywords || []
-        const kwPct = keywords.length ? Math.round((keywords.length - missing.length) / keywords.length * 100) : null
-        return {
-            id: r.id,
-            resume_id: r.resume_id,
-            score: r.score_total,
-            provider: r.provider,
-            model: r.model,
-            attempt_type: r.attempt_type || "resume_analysis",
-            company: results.company || "",
-            job_match_pct: typeof results.match_pct === "number" ? results.match_pct : null,
-            keyword_match_pct: kwPct,
-            created_at: r.created_at,
-        }
-    }))
+    res.json(rows.map(r => ({
+        id: r.id,
+        resume_id: r.resume_id,
+        score: r.score_total,
+        provider: r.provider,
+        model: r.model,
+        attempt_type: r.attempt_type || "resume_analysis",
+        company: r.company || "",
+        match_pct: r.match_pct,
+        created_at: r.created_at,
+    })))
 })
 
 router.get("/insights/overview", requireAuth, (req, res) => {
@@ -518,18 +497,19 @@ router.get("/insights/overview", requireAuth, (req, res) => {
     // insights wants the newest last so resort ascending outside
     const rows = db.prepare(`
         SELECT * FROM (
-            SELECT id, resume_id, results_json, score_total, provider, model, created_at
+            SELECT id, resume_id, score_json, timing_json, score_total, provider, model, created_at
             FROM analyses WHERE user_id = ? AND attempt_type != 'cover_letter_only' ORDER BY created_at DESC LIMIT 50
         ) ORDER BY created_at ASC
     `).all(req.user.id)
     const analyses = rows.map(row => {
-        let results = {}
-        try { results = JSON.parse(row.results_json) } catch {}
+        let score = {}, timing = {}
+        try { score = JSON.parse(row.score_json || "{}") } catch {}
+        try { timing = JSON.parse(row.timing_json || "{}") } catch {}
         return {
             id: row.id,
             resume_id: row.resume_id,
-            score: results.score || { total: row.score_total },
-            timing: results.timing || {},
+            score: score.total !== undefined ? score : { total: row.score_total },
+            timing,
             provider: row.provider,
             model: row.model,
             created_at: row.created_at,

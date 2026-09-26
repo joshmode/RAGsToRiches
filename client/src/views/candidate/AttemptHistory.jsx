@@ -24,7 +24,7 @@ export function AttemptHistory({ history, onOpenAttempt, unreadById = {} }) {
         {visible.length > 0 && <div className="card mentor-history-table-wrap"><table><thead><tr>
             {tab === "resume"
                 ? <><th>Attempt</th><th>Score</th><th>Date</th><th /></>
-                : <><th>Company</th><th>Attempt</th><th>Job Match</th><th>Keyword Match</th><th>Date</th><th /></>}
+                : <><th>Company</th><th>Attempt</th><th>Job Fit</th><th>Date</th><th /></>}
         </tr></thead><tbody>
             {tab === "resume" && resumeAtts.map((item, index) => {
                 const unread = !!unreadById[item.id]
@@ -40,8 +40,7 @@ export function AttemptHistory({ history, onOpenAttempt, unreadById = {} }) {
                 return <tr key={item.id} className={unread ? "history-row-unread-user" : ""}>
                     <td><Building2 size={12} /> {item.company || "Company not detected"}</td>
                     <td>#{clNumberOf[item.id]}</td>
-                    <td>{item.job_match_pct != null ? `${item.job_match_pct}%` : "—"}</td>
-                    <td>{item.keyword_match_pct != null ? `${item.keyword_match_pct}%` : "—"}</td>
+                    <td>{item.match_pct != null ? `${item.match_pct}%` : "—"}</td>
                     <td>{formatDateTime(item.created_at)}</td>
                     <td><button className="btn-secondary btn-small" onClick={() => onOpenAttempt(item.id)}>Open</button></td>
                 </tr>

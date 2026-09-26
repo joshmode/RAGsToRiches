@@ -182,7 +182,7 @@ router.get("/candidates/:candidateId/history", requireAuth, requireRole("mentor"
     const db = getDb()
     const attemptOf = attemptNums(db, candidateId)
     const analyses = db.prepare(
-        "SELECT id, resume_id, score_total, provider, model, job_description, attempt_type, results_json, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
+        "SELECT id, resume_id, score_total, provider, model, job_description, attempt_type, company, match_pct, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
     ).all(candidateId)
     const snapshots = db.prepare(`
         SELECT rs.id, rs.resume_id, rs.analysis_id, rs.decisions_json, rs.score_total, rs.created_at
@@ -191,21 +191,7 @@ router.get("/candidates/:candidateId/history", requireAuth, requireRole("mentor"
     `).all(candidateId)
     res.json({
         // same fields the candidate's own history gives
-        analyses: analyses.map(a => {
-            let results = {}
-            try { results = JSON.parse(a.results_json) } catch {}
-            const keywords = results.jd_keywords || []
-            const missing = results.missing_keywords || []
-            const kwPct = keywords.length ? Math.round((keywords.length - missing.length) / keywords.length * 100) : null
-            const { results_json, ...rest } = a
-            return {
-                ...rest,
-                attempt_number: attemptOf[a.id] || null,
-                company: results.company || "",
-                job_match_pct: typeof results.match_pct === "number" ? results.match_pct : null,
-                keyword_match_pct: kwPct,
-            }
-        }),
+        analyses: analyses.map(a => ({ ...a, company: a.company || "", attempt_number: attemptOf[a.id] || null })),
         revisions: snapshots.map(s => ({ ...s, decisions: JSON.parse(s.decisions_json || "{}") })),
     })
 })
