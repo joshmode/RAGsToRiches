@@ -1239,10 +1239,18 @@ details.card > summary {
 }
 .upload-card-remove:hover { background: var(--c-error-bg); border-color: rgba(220,38,38,0.3); color: var(--c-error); }
 
-/* analysis progress */
-.processing-stages { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; text-align: left; }
-.processing-stage-label { font-weight: 600; }
+/* analysis progress, every stage an event the engine sent */
 .processing-timer { font-size: 0.74rem; opacity: 0.85; display: inline-flex; align-items: center; gap: 0.3rem; font-variant-numeric: tabular-nums; }
+.analysis-progress-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.progress-bar { height: 6px; border-radius: 999px; background: var(--c-border); overflow: hidden; margin: 0.4rem 0 0.9rem; }
+.progress-bar span { display: block; height: 100%; background: var(--c-primary-dark); border-radius: 999px; transition: width 0.4s ease; }
+.analysis-stages { list-style: none; display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.6rem; }
+.analysis-stage { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--c-text-muted); }
+.analysis-stage.active { color: var(--c-text); font-weight: 600; }
+.analysis-stage.done { color: var(--c-text); }
+.analysis-stage.done svg { color: var(--c-success); }
+.analysis-stage-dot { width: 13px; height: 13px; display: inline-flex; align-items: center; justify-content: center; }
+.analysis-stage-dot::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--c-border); }
 
 /* nav spacing */
 .nav-pill { display: inline-flex; align-items: center; gap: 0.55rem; }

@@ -1,41 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useDropzone } from "react-dropzone"
-import { CheckCircle2, ChevronDown, Clock, File as FileIcon, Mail, RotateCw, Sparkles, Trash2 } from "lucide-react"
+import { CheckCircle2, ChevronDown, File as FileIcon, Mail, RotateCw, Sparkles, Trash2 } from "lucide-react"
 import { formatFileSize } from "../../lib/format"
-
-// not real
-const PROCESSING_STAGE_LABELS = ["Extracting keywords…", "Matching sections…", "Rewriting bullets…", "Scoring resume…"]
-
-const BASE_ESTIMATE_SECONDS = 45
-
-// elapsed is real, the estimate is re-derived for user engagement
-function useProgress() {
-    const [elapsed, setElapsed] = useState(0)
-    const [estimate, setEstimate] = useState(BASE_ESTIMATE_SECONDS)
-    const startRef = useRef(Date.now())
-    useEffect(() => {
-        const tickId = setInterval(() => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)), 1000)
-        const estimateId = setInterval(() => {
-            const nowElapsed = Math.floor((Date.now() - startRef.current) / 1000)
-            setEstimate(prev => (nowElapsed >= prev ? nowElapsed + 15 : prev))
-        }, 15000)
-        return () => { clearInterval(tickId); clearInterval(estimateId) }
-    }, [])
-    return { elapsed, remaining: Math.max(0, estimate - elapsed) }
-}
-
-function ProcessingStages() {
-    const [idx, setIdx] = useState(0)
-    const { elapsed, remaining } = useProgress()
-    useEffect(() => {
-        const t = setInterval(() => setIdx(i => (i + 1) % PROCESSING_STAGE_LABELS.length), 3500)
-        return () => clearInterval(t)
-    }, [])
-    return <span className="processing-stages">
-        <span className="processing-stage-label">{PROCESSING_STAGE_LABELS[idx]}</span>
-        <span className="processing-timer"><Clock size={12} /> {elapsed}s elapsed · ~{remaining}s remaining</span>
-    </span>
-}
 
 // wide segment is the full analysis the caret is cover-letter-only
 function AnalyseSplitButton({ disabled, analysing, quickBusy, onAnalyse, onQuickCoverLetter }) {
@@ -52,7 +18,7 @@ function AnalyseSplitButton({ disabled, analysing, quickBusy, onAnalyse, onQuick
     const busy = analysing || quickBusy
     return <div className="split-btn" ref={wrapRef}>
         <button className="btn-primary split-btn-main" disabled={disabled || busy} onClick={() => { setMenuOpen(false); onAnalyse() }}>
-            {analysing ? <><span className="spinner" /><ProcessingStages /></> : <><Sparkles size={16} /> Analyse My Resume</>}
+            {analysing ? <><span className="spinner" /> Analysing…</> : <><Sparkles size={16} /> Analyse My Resume</>}
         </button>
         <button
             type="button" className="split-btn-caret" disabled={disabled || busy}

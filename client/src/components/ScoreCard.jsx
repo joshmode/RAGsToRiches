@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Mail, TrendingDown, TrendingUp } from "lucide-react"
+import { Loader2, Mail, TrendingDown, TrendingUp } from "lucide-react"
 import { getScoreCfg, heatmapQuality, isGraded, scoreBreakdown } from "../lib/score"
 
 function useCountUp(target, duration = 700) {
@@ -32,11 +32,21 @@ function ownStanding(score, history) {
     return `Better than ${Math.round((better / past.length) * 100)}% of your past attempts`
 }
 
-export function ScoreCard({ scoreData, history, attemptType }) {
+export function ScoreCard({ scoreData, history, attemptType, pending = false }) {
     // hooks before the early return below 
     const score = typeof scoreData === "object" ? scoreData?.total || 0 : scoreData || 0
     const displayScore = useCountUp(score)
 
+    // no score until the last batch is in, and a 0 would read as a real one
+    if (pending) {
+        return <div className="card score-card">
+            <span className="section-label">Resume Score</span>
+            <div className="score-cta">
+                <Loader2 size={22} className="spin-icon" />
+                <p className="muted">Scored once every bullet has been read.</p>
+            </div>
+        </div>
+    }
     // never ran analyse(), and 0/100 reads as a bad score not n/a
     if (attemptType === "cover_letter_only") {
         return <div className="card score-card score-card-cover-letter-only">

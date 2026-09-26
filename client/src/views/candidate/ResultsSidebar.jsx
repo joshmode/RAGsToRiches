@@ -61,7 +61,7 @@ export function ResultsSidebar({ result, user, onLogout, history, collapsed, onT
                         <button className="btn-signout" onClick={onLogout}>{user.is_guest ? <><LogIn size={13} /> Sign In</> : <><LogOut size={13} /> Sign out</>}</button>
                     </div>
                 </div>
-                <ScoreCard scoreData={result.score} history={history.filter(h => h.attempt_type !== "cover_letter_only")} attemptType={result.attempt_type} />
+                <ScoreCard scoreData={result.score} history={history.filter(h => h.attempt_type !== "cover_letter_only")} attemptType={result.attempt_type} pending={!!result.partial} />
                 <div className="sidebar-scroll">
                     <div className="card"><span className="section-label">Parser Status</span>{["EXPERIENCE", "EDUCATION", "SKILLS", "PROJECTS"].map(name => <p key={name} className={sections[name] ? "ok-text" : "error-text"}>{sections[name] ? "✓" : "✗"} {name[0] + name.slice(1).toLowerCase()}</p>)}</div>
                     {hasContact && <button className="btn-ghost sidebar-metadata-btn" onClick={() => setShowMetadata(true)}><IdCard size={14} /> Resume Metadata</button>}

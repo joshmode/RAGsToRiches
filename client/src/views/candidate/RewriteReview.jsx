@@ -13,14 +13,19 @@ function decisionMark(state) {
     return "• "
 }
 
-export function RewriteReview({ result, file, decisions, setDecisions, analysisId }) {
-    const [active, setActive] = useState(0)
+export function RewriteReview({ result, file, decisions, setDecisions, analysisId, pending = false }) {
+    const [activeKey, setActiveKey] = useState(null)
     const [pdfUrl, setPdfUrl] = useState("")
     const [error, setError] = useState("")
     const [mentorEdits, setMentorEdits] = useState({})
     const actionable = useMemo(() => Object.entries(result.rewrites || {}).flatMap(([section, items]) => items.map((item, index) => ({ section, item, index, key: item.id || `${section}_${index}` })).filter(({ item }) => item.framework_used !== "none" && item.framework_used !== "error" && item.original !== item.rewritten)), [result])
     const count = actionable.length
-    const current = actionable[Math.min(active, Math.max(count - 1, 0))]
+    // by key, not index: suggestions that land mid-review, or the final order, mustn't
+    // swap the one on screen for another
+    const foundAt = actionable.findIndex(({ key }) => key === activeKey)
+    const active = foundAt === -1 ? 0 : foundAt
+    const current = actionable[active]
+    const goTo = idx => setActiveKey(actionable[(idx + count) % count]?.key ?? null)
 
     // accepted mentor rewrites beat the llm's own
     useEffect(() => {
@@ -35,7 +40,7 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
     }, [analysisId])
 
     // reanalysing on this tab doesn't change the view, so this never remounts on its own
-    useEffect(() => { setActive(0); setError("") }, [analysisId])
+    useEffect(() => { setError("") }, [analysisId])
 
     useEffect(() => {
         let cancelled = false
@@ -90,7 +95,7 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
     async function decide(value) {
         if (!current) return
         await save({ ...decisions, [current.key]: value })
-        if (count > 1) setActive((active + 1) % count)
+        if (count > 1) goTo(active + 1)
     }
 
     // ignored while typing so it can't hijack the comment box
@@ -100,14 +105,15 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
             if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return
             if (e.key === "a" || e.key === "A") decide(true)
             else if (e.key === "d" || e.key === "D") decide(false)
-            else if (e.key === "ArrowLeft") setActive(a => (a - 1 + count) % count)
-            else if (e.key === "ArrowRight") setActive(a => (a + 1) % count)
+            else if (e.key === "ArrowLeft") goTo(active - 1)
+            else if (e.key === "ArrowRight") goTo(active + 1)
         }
         window.addEventListener("keydown", onKeyDown)
         return () => window.removeEventListener("keydown", onKeyDown)
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [current?.key, count, decisions])
+    }, [current?.key, count, decisions, actionable])
 
+    if (!count && pending) return <div className="card muted">Suggestions appear here as each batch of bullets is rewritten.</div>
     if (!count) return <div className="card muted">No rewrite-worthy sentences were detected. Header and label lines were skipped.</div>
     const state = decisions[current.key]
     const reviewedCount = actionable.filter(({ key }) => decisions[key] !== undefined).length
@@ -115,22 +121,22 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
         <h2 className="view-title">Review Suggestions</h2>
         {error && <p className="error-msg">{error}</p>}
         <div className="review-toolbar">
-            <span className="review-progress">{reviewedCount} of {count} reviewed</span>
+            <span className="review-progress">{reviewedCount} of {count}{pending ? " so far" : ""} reviewed</span>
             <span className="status-chip accepted-chip">{Object.values(decisions).filter(v => v).length} accepted</span>
             <span className="status-chip dismissed-chip">{Object.values(decisions).filter(v => v === false).length} dismissed</span>
             <span className="toolbar-spacer" />
             <span className="kbd-hint"><kbd>A</kbd> accept · <kbd>D</kbd> dismiss · <kbd>←</kbd><kbd>→</kbd> navigate</span>
-            <button className="btn-secondary" onClick={() => save(Object.fromEntries(actionable.map(({ key }) => [key, true])))}>Accept all</button>
+            <button className="btn-secondary" disabled={pending} title={pending ? "Available once every suggestion is in" : undefined} onClick={() => save(Object.fromEntries(actionable.map(({ key }) => [key, true])))}>Accept all</button>
             <button className="btn-ghost" onClick={() => save({})}>Clear decisions</button>
         </div>
         <div className="two-col-pdf"><div><span className="section-label">Highlighted Resume</span>{pdfUrl ? <div className="pdf-shell"><iframe className="pdf-frame" src={pdfUrl} title="Uploaded resume" /></div> : <div className="card muted">Source preview is available for PDF uploads. Parsed content remains available under Extracted Sections.</div>}</div>
             <div>
                 <div className="review-nav">
-                    <button className="btn-secondary btn-arrow" onClick={() => setActive((active - 1 + count) % count)} title="Previous suggestion"><ChevronLeft size={16} /></button>
+                    <button className="btn-secondary btn-arrow" onClick={() => goTo(active - 1)} title="Previous suggestion"><ChevronLeft size={16} /></button>
                     <select
                         className="input-field suggestion-jump"
-                        value={Math.min(active, count - 1)}
-                        onChange={e => setActive(Number(e.target.value))}
+                        value={active}
+                        onChange={e => goTo(Number(e.target.value))}
                     >
                         {actionable.map(({ section, item, key }, idx) => (
                             <option key={key} value={idx}>
@@ -138,7 +144,7 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
                             </option>
                         ))}
                     </select>
-                    <button className="btn-secondary btn-arrow" onClick={() => setActive((active + 1) % count)} title="Next suggestion"><ChevronRight size={16} /></button>
+                    <button className="btn-secondary btn-arrow" onClick={() => goTo(active + 1)} title="Next suggestion"><ChevronRight size={16} /></button>
                 </div>
                 <span className="section-label">Rewrite Decision</span>
                 <div className={`suggestion-card ${state === true ? "accepted" : state === false ? "dismissed" : ""}`} key={current.key}>

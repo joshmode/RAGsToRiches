@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { BarChart3, FileEdit, History, KeyRound, LogIn, LogOut, MessageSquareText, UploadCloud } from "lucide-react"
 import api from "./api/client"
 import { pollJob } from "./api/jobs"
+import { streamAnalysis } from "./api/stream"
 import { useAuth } from "./context/AuthContext"
 import { useNotifSummary } from "./hooks/useNotifSummary"
 import { getError } from "./lib/errors"
@@ -14,6 +15,7 @@ import { AuthBar, Hero, PipelineStepper, TopNav } from "./components/AppChrome"
 import { SessionJoin } from "./components/SessionJoin"
 import { AuthPage } from "./views/AuthPage"
 import { ResumeSetup } from "./views/candidate/ResumeSetup"
+import { AnalysisProgress, advanceProgress } from "./views/candidate/AnalysisProgress"
 import { ResultsSidebar } from "./views/candidate/ResultsSidebar"
 import { AttemptHistory } from "./views/candidate/AttemptHistory"
 import { RewriteReview } from "./views/candidate/RewriteReview"
@@ -38,6 +40,28 @@ const PROVIDER_OPTIONS = [
 // remembered across reloads so auto-collapse stops fighting them
 const SIDEBAR_AUTO_COLLAPSE_DISABLED_KEY = "rtr_sidebar_auto_collapse_disabled"
 
+// streamed so suggestions arrive batch by batch. /run and polling stay for a browser
+// that can't read a response body as it arrives
+async function runAnalysis(body, onEvent) {
+    try {
+        return await streamAnalysis(body, onEvent)
+    } catch (err) {
+        if (!String(err.message).includes("Streaming is not supported")) throw err
+        const run = await api.post("/analysis/run", body)
+        return await pollJob(run.data.job_id)
+    }
+}
+
+// streamed rewrites arrive a batch at a time, in whatever order the batches finish.
+// grouped back into resume order so a half-finished review still reads top to bottom
+function groupRewrites(items, sections) {
+    const grouped = {}
+    for (const section of Object.keys(sections || {})) grouped[section] = []
+    for (const item of items) (grouped[item.section] = grouped[item.section] || []).push(item)
+    for (const list of Object.values(grouped)) list.sort((a, b) => (a.line_indices?.[0] ?? 0) - (b.line_indices?.[0] ?? 0))
+    return grouped
+}
+
 function App() {
     const { user, logout } = useAuth()
     const [provider, setProvider] = useState("default")
@@ -55,6 +79,11 @@ function App() {
     const [docs, setDocs] = useState({ cv: "", cover_letter: "" })
     const [view, setView] = useState("Suggestions")
     const [busy, setBusy] = useState(false)
+    // the stages the engine has reported, while an analysis runs
+    const [progress, setProgress] = useState(null)
+    // decisions made before the analysis finished get saved once it has an id
+    const decisionsRef = useRef(decisions)
+    useEffect(() => { decisionsRef.current = decisions }, [decisions])
     // separate from the full analysis the two halves are very different requests
     const [quickBusy, setQuickBusy] = useState(false)
     const [error, setError] = useState("")
@@ -83,6 +112,8 @@ function App() {
     const needsKey = providerMeta?.byok && status[provider] === false
     const fullName = result?.parsed_resume?.contact?.name || result?.contact?.name || ""
     const isCoverLetterOnlyAttempt = result?.attempt_type === "cover_letter_only"
+    // suggestions are streaming in but nothing else exists yet
+    const pending = !!result?.partial
 
     function refreshStatus() {
         return api.get("/settings/env-status").then(res => {
@@ -175,23 +206,42 @@ function App() {
         const jd = jdOverride !== undefined ? jdOverride : jobDescription
         setBusy(true)
         setError("")
+        setResult(null)
+        setAnalysisId(null)
+        setDecisions({})
+        setProgress({ stage: "uploading", startedAt: Date.now() })
         try {
             const data = new FormData()
             data.append("file", file)
             const upload = await api.post("/analysis/upload", data)
-            const run = await api.post("/analysis/run", {
+            const parsed = upload.data.parsed
+            const base = { parsed_resume: parsed, job_description: jd, raw_text: parsed.raw_text }
+            const streamed = []
+            const completed = await runAnalysis({
                 resume_id: upload.data.resume_id,
-                resume_json: upload.data.parsed,
                 job_description: jd,
                 provider,
                 use_critic: useCritic,
                 local_endpoint: provider === "local" ? localEndpoint : "",
+            }, event => {
+                setProgress(prev => advanceProgress(prev, event))
+                if (event.stage !== "chunk" || !event.rewrites?.length) return
+                const first = !streamed.length
+                streamed.push(...event.rewrites)
+                // the review opens on the first batch and fills in as the rest land
+                setResult({ ...base, contact: parsed.contact, sections: parsed.sections, rewrites: groupRewrites(streamed, parsed.sections), partial: true })
+                if (first) {
+                    if (landOn) setView(landOn)
+                    setSetupExpanded(false)
+                }
             })
-            const completed = await pollJob(run.data.job_id)
-            const newResult = { ...completed, parsed_resume: upload.data.parsed, job_description: jd, raw_text: upload.data.parsed.raw_text }
+            const newResult = { ...completed, ...base }
             setResult(newResult)
             setAnalysisId(completed.analysis_id)
-            setDecisions({})
+            const early = decisionsRef.current
+            if (Object.keys(early).length) {
+                api.post(`/analysis/${completed.analysis_id}/decisions`, { decisions: early }).catch(() => {})
+            }
             if (landOn) setView(landOn)
             setSidebarCollapsed(false)
             setSetupExpanded(false)
@@ -210,7 +260,7 @@ function App() {
             const hist = await api.get("/analysis/history")
             setHistory(hist.data)
             return { analysisId: completed.analysis_id, result: newResult }
-        } catch (err) { setError(getError(err)); return null } finally { setBusy(false) }
+        } catch (err) { setError(getError(err)); return null } finally { setBusy(false); setProgress(null) }
     }
 
     // not analyse()'s path one synchronous llm call
@@ -426,7 +476,8 @@ function App() {
             {result && <div className="setup-collapse-row"><button className="btn-ghost" onClick={() => setSetupExpanded(false)}>Hide setup</button></div>}
         </>)}
         {error && <p className="warning-strip">{error}</p>}
-        {!result && !historyOnly && <details className="card"><summary>Mentor Feedback &amp; Review Sessions<NotificationBadge count={notifSummary.unread_total} /></summary><div className="prelim-panels"><SessionJoin /><FeedbackInbox unreadByType={notifSummary.by_attempt_type} onDocumentAccepted={(documentType, text) => setDocs(d => ({ ...d, [documentType]: text }))} /></div></details>}
+        {progress && <AnalysisProgress progress={progress} />}
+        {!result && !historyOnly && !busy && <details className="card"><summary>Mentor Feedback &amp; Review Sessions<NotificationBadge count={notifSummary.unread_total} /></summary><div className="prelim-panels"><SessionJoin /><FeedbackInbox unreadByType={notifSummary.by_attempt_type} onDocumentAccepted={(documentType, text) => setDocs(d => ({ ...d, [documentType]: text }))} /></div></details>}
         {!result && historyOnly && <section className="mentor-workspace">
             <div className="detail-head">
                 <button className="btn-secondary" onClick={() => setHistoryOnly(false)}>← Back</button>
@@ -440,6 +491,8 @@ function App() {
             <ResultsSidebar result={result} user={user} onLogout={logout} history={history} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
             <div className="workspace-main">
                 <div className="fade-in" key={view}>
+                    {pending && view !== "Suggestions" && view !== "Extracted Sections" && <div className="card muted">This fills in when the analysis finishes. Suggestions are already arriving under Suggestions.</div>}
+                    {!pending && <>
                     {view === "Suggestions" && (isCoverLetterOnlyAttempt
                         ? <><h2 className="view-title">Review Suggestions</h2><AnalysisRequiredGate icon={MessageSquareText} busy={busy} message="This attempt only generated a Cover Letter - run a full analysis on the same resume to get rewrite suggestions." onAnalyse={() => analyse(undefined, { landOn: "Suggestions" })} /></>
                         : <RewriteReview result={result} file={file} decisions={decisions} setDecisions={setDecisions} analysisId={analysisId} />)}
@@ -463,6 +516,9 @@ function App() {
                         analysing={busy}
                         busyAction={jmBusy}
                     />}
+                    </>}
+                    {pending && view === "Suggestions" && <RewriteReview result={result} file={file} decisions={decisions} setDecisions={setDecisions} analysisId={null} pending />}
+                    {pending && view === "Extracted Sections" && <ExtractedSections result={result} />}
                 </div>
             </div>
             </div>
