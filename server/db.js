@@ -6,7 +6,10 @@ import { fileURLToPath } from "url"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const DB_PATH = path.resolve(__dirname, "..", "data", "ragstoriches.db")
+// read on first use, after dotenv has run. ":memory:" gives the tests their own db
+function dbPath() {
+    return process.env.DB_PATH || path.resolve(__dirname, "..", "data", "ragstoriches.db")
+}
 
 let _db = null
 
@@ -293,8 +296,9 @@ function deleteGuest(db, userId) {
 
 export function getDb() {
     if (!_db) {
-        fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
-        _db = new Database(DB_PATH)
+        const file = dbPath()
+        if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true })
+        _db = new Database(file)
         _db.pragma("journal_mode = WAL")
         _db.pragma("foreign_keys = ON")
         initDb(_db)
