@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, Check, CheckCircle2, ChevronLeft, ChevronRight, Info, Lightbulb, ShieldCheck, X, XCircle } from "lucide-react"
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
-import { fileToBase64 } from "../../lib/files"
 import { DocumentDiff } from "../../components/DocumentDiff"
 import { MentorSuggestionBlock, editSupersedes } from "../../components/MentorSuggestionBlock"
 import { AnnotationThread } from "../../components/AnnotationThread"
 import { toast } from "../../components/Toast"
 import { claimFlags, criticNote, isActionable, isFlagged } from "../../lib/review"
+
+const PdfViewer = lazy(() => import("../../components/PdfViewer"))
 
 function decisionMark(state, flagged) {
     if (state === true) return "✓ "
@@ -29,7 +30,6 @@ function GuardSummary({ result, flagged }) {
 
 export function RewriteReview({ result, file, decisions, setDecisions, analysisId, pending = false }) {
     const [activeKey, setActiveKey] = useState(null)
-    const [pdfUrl, setPdfUrl] = useState("")
     const [error, setError] = useState("")
     const [mentorEdits, setMentorEdits] = useState({})
     const actionable = useMemo(() => Object.entries(result.rewrites || {}).flatMap(([section, items]) => items.map((item, index) => ({ section, item, index, key: item.id || `${section}_${index}` })).filter(({ item }) => isActionable(item))), [result])
@@ -57,43 +57,11 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
     // reanalysing on this tab doesn't change the view, so this never remounts on its own
     useEffect(() => { setError("") }, [analysisId])
 
-    useEffect(() => {
-        let cancelled = false
-        let createdUrl = ""
-        if (!file || file.type !== "application/pdf" || !current) {
-            setPdfUrl("")
-            return undefined
-        }
-        async function render() {
-            let url = ""
-            try {
-                const items = actionable.map(({ key, item }) => ({
-                    id: key,
-                    text: item.highlight_text || item.original || "",
-                    severity: item.severity || "yellow",
-                    reasoning: item.reasoning || "",
-                    rewritten: item.rewritten || "",
-                }))
-                const res = await api.post("/analysis/highlight", { file: await fileToBase64(file), items, active_key: current.key }, { responseType: "blob" })
-                const activePage = res.headers["x-active-page"]
-                url = URL.createObjectURL(res.data) + (activePage ? `#page=${activePage}` : "")
-            } catch {
-                url = URL.createObjectURL(file)
-            }
-            // take thje newer suggestion first
-            if (cancelled) {
-                URL.revokeObjectURL(url.split("#")[0])
-                return
-            }
-            createdUrl = url
-            setPdfUrl(url)
-        }
-        render()
-        return () => {
-            cancelled = true
-            if (createdUrl) URL.revokeObjectURL(createdUrl.split("#")[0])
-        }
-    }, [file, current?.key, actionable])
+    // drawn in the browser now, so moving between suggestions is only a scroll
+    const highlights = useMemo(() => actionable.map(({ key, item }) => ({
+        id: key, text: item.highlight_text || item.original || "", severity: item.severity || "yellow",
+    })), [actionable])
+    const isPdf = file?.type === "application/pdf"
 
     // decisions show at once and save in the background. one request after another,
     // so a quick change of mind can't land before the choice it replaced
@@ -167,7 +135,9 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
             <button className="btn-secondary" disabled={pending} title={pending ? "Available once every suggestion is in" : flaggedCount ? "Flagged suggestions are left for you to decide" : undefined} onClick={acceptAllUnflagged}>{flaggedCount ? "Accept all unflagged" : "Accept all"}</button>
             <button className="btn-ghost" onClick={() => save({})}>Clear decisions</button>
         </div>
-        <div className="two-col-pdf"><div><span className="section-label">Highlighted Resume</span>{pdfUrl ? <div className="pdf-shell"><iframe className="pdf-frame" src={pdfUrl} title="Uploaded resume" /></div> : <div className="card muted">Source preview is available for PDF uploads. Parsed content remains available under Extracted Sections.</div>}</div>
+        <div className="two-col-pdf"><div><span className="section-label">Highlighted Resume</span>{isPdf
+            ? <div className="pdf-shell"><Suspense fallback={<p className="muted pdf-viewer-note">Loading the preview…</p>}><PdfViewer file={file} highlights={highlights} activeId={current.key} title="Your resume, with the suggestions highlighted" /></Suspense></div>
+            : <div className="card muted">Source preview is available for PDF uploads. Parsed content remains available under Extracted Sections.</div>}</div>
             <div>
                 <div className="review-nav">
                     <button className="btn-secondary btn-arrow" onClick={() => goTo(active - 1)} title="Previous suggestion"><ChevronLeft size={16} /></button>
