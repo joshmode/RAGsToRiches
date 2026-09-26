@@ -1,16 +1,30 @@
 import { useEffect, useMemo, useState } from "react"
-import { Check, CheckCircle2, ChevronLeft, ChevronRight, Lightbulb, X, XCircle } from "lucide-react"
+import { AlertTriangle, Check, CheckCircle2, ChevronLeft, ChevronRight, Info, Lightbulb, ShieldCheck, X, XCircle } from "lucide-react"
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
 import { fileToBase64 } from "../../lib/files"
 import { DocumentDiff } from "../../components/DocumentDiff"
 import { MentorSuggestionBlock, editSupersedes } from "../../components/MentorSuggestionBlock"
 import { AnnotationThread } from "../../components/AnnotationThread"
+import { toast } from "../../components/Toast"
+import { claimFlags, criticNote, isActionable, isFlagged } from "../../lib/review"
 
-function decisionMark(state) {
+function decisionMark(state, flagged) {
     if (state === true) return "✓ "
     if (state === false) return "✗ "
-    return "• "
+    return flagged ? "⚠ " : "• "
+}
+
+// what the checks caught across the whole attempt, so a clean run says so too
+function GuardSummary({ result, flagged }) {
+    const guard = result.claim_guard || {}
+    const parts = []
+    if (flagged) parts.push(`${flagged} flagged for you to check`)
+    if (guard.withheld) parts.push(`${guard.withheld} withheld after the critic couldn't fix ${guard.withheld === 1 ? "it" : "them"}`)
+    if (result.already_strong) parts.push(`${result.already_strong} already strong, left as ${result.already_strong === 1 ? "it is" : "they are"}`)
+    if (result.rewrite_skipped) parts.push(`${result.rewrite_skipped} not rewritten: the model didn't answer in time`)
+    if (!parts.length) return <p className="guard-summary"><ShieldCheck size={14} /> Claim checks found nothing invented or overstated.</p>
+    return <p className="guard-summary"><ShieldCheck size={14} /> Claim checks: {parts.join(" · ")}.</p>
 }
 
 export function RewriteReview({ result, file, decisions, setDecisions, analysisId, pending = false }) {
@@ -18,7 +32,8 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
     const [pdfUrl, setPdfUrl] = useState("")
     const [error, setError] = useState("")
     const [mentorEdits, setMentorEdits] = useState({})
-    const actionable = useMemo(() => Object.entries(result.rewrites || {}).flatMap(([section, items]) => items.map((item, index) => ({ section, item, index, key: item.id || `${section}_${index}` })).filter(({ item }) => item.framework_used !== "none" && item.framework_used !== "error" && item.original !== item.rewritten)), [result])
+    const actionable = useMemo(() => Object.entries(result.rewrites || {}).flatMap(([section, items]) => items.map((item, index) => ({ section, item, index, key: item.id || `${section}_${index}` })).filter(({ item }) => isActionable(item))), [result])
+    const flaggedCount = actionable.filter(({ item }) => isFlagged(item)).length
     const count = actionable.length
     // by key, not index: suggestions that land mid-review, or the final order, mustn't
     // swap the one on screen for another
@@ -113,12 +128,27 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [current?.key, count, decisions, actionable])
 
+    // flagged rewrites claim something the original doesn't, so a bulk accept leaves
+    // them for the candidate to decide one by one
+    function acceptAllUnflagged() {
+        const next = { ...decisions }
+        for (const { key, item } of actionable) {
+            if (!isFlagged(item) && next[key] === undefined) next[key] = true
+        }
+        save(next)
+        const left = actionable.filter(({ key, item }) => isFlagged(item) && next[key] === undefined).length
+        if (left) toast(`${left} flagged suggestion${left === 1 ? " was" : "s were"} left for you to review one at a time`)
+    }
+
     if (!count && pending) return <div className="card muted">Suggestions appear here as each batch of bullets is rewritten.</div>
     if (!count) return <div className="card muted">No rewrite-worthy sentences were detected. Header and label lines were skipped.</div>
     const state = decisions[current.key]
     const reviewedCount = actionable.filter(({ key }) => decisions[key] !== undefined).length
+    const flags = claimFlags(current.item)
+    const note = criticNote(current.item)
     return <>
         <h2 className="view-title">Review Suggestions</h2>
+        {!pending && <GuardSummary result={result} flagged={flaggedCount} />}
         {error && <p className="error-msg">{error}</p>}
         <div className="review-toolbar">
             <span className="review-progress">{reviewedCount} of {count}{pending ? " so far" : ""} reviewed</span>
@@ -126,7 +156,7 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
             <span className="status-chip dismissed-chip">{Object.values(decisions).filter(v => v === false).length} dismissed</span>
             <span className="toolbar-spacer" />
             <span className="kbd-hint"><kbd>A</kbd> accept · <kbd>D</kbd> dismiss · <kbd>←</kbd><kbd>→</kbd> navigate</span>
-            <button className="btn-secondary" disabled={pending} title={pending ? "Available once every suggestion is in" : undefined} onClick={() => save(Object.fromEntries(actionable.map(({ key }) => [key, true])))}>Accept all</button>
+            <button className="btn-secondary" disabled={pending} title={pending ? "Available once every suggestion is in" : flaggedCount ? "Flagged suggestions are left for you to decide" : undefined} onClick={acceptAllUnflagged}>{flaggedCount ? "Accept all unflagged" : "Accept all"}</button>
             <button className="btn-ghost" onClick={() => save({})}>Clear decisions</button>
         </div>
         <div className="two-col-pdf"><div><span className="section-label">Highlighted Resume</span>{pdfUrl ? <div className="pdf-shell"><iframe className="pdf-frame" src={pdfUrl} title="Uploaded resume" /></div> : <div className="card muted">Source preview is available for PDF uploads. Parsed content remains available under Extracted Sections.</div>}</div>
@@ -140,7 +170,7 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
                     >
                         {actionable.map(({ section, item, key }, idx) => (
                             <option key={key} value={idx}>
-                                {decisionMark(decisions[key])}{idx + 1} of {count} · {section} · {(item.original || "").slice(0, 48)}{(item.original || "").length > 48 ? "…" : ""}
+                                {decisionMark(decisions[key], isFlagged(item))}{idx + 1} of {count} · {section} · {(item.original || "").slice(0, 48)}{(item.original || "").length > 48 ? "…" : ""}
                             </option>
                         ))}
                     </select>
@@ -166,10 +196,16 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
                         />
                         <MentorSuggestionBlock baseText={current.item.rewritten} feedback={mentorEdits[current.key]} viewerRole="candidate" />
                     </details>
+                    {flags.length > 0 && <div className="claim-flags" role="note" aria-label="Claim checks">
+                        {flags.map(flag => <p className={`claim-flag claim-flag-${flag.kind}`} key={flag.kind}>
+                            <AlertTriangle size={14} /><span><b>{flag.title}.</b> {flag.detail}</span>
+                        </p>)}
+                    </div>}
+                    {note && <p className="critic-note"><Info size={13} /> {note}</p>}
                     <div className="reasoning-row"><Lightbulb size={13} /> {current.item.reasoning}</div>
                 </div>
                 <div className="decision-actions">
-                    <button className={state === false ? "btn-outline-primary btn-accept" : "btn-primary btn-accept"} onClick={() => decide(true)}><Check size={16} /> Accept &amp; next</button>
+                    <button className={state === false ? "btn-outline-primary btn-accept" : "btn-primary btn-accept"} onClick={() => decide(true)}><Check size={16} /> {flags.length ? "Accept anyway" : "Accept"} &amp; next</button>
                     <button className="btn-ghost" onClick={() => decide(false)}><X size={15} /> Dismiss &amp; next</button>
                 </div>
                 <AnnotationThread analysisId={analysisId} suggestionKey={current?.key} section={current?.section} viewerRole="candidate" />

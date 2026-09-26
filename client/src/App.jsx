@@ -8,6 +8,7 @@ import { useNotifSummary } from "./hooks/useNotifSummary"
 import { getError } from "./lib/errors"
 import { RESUME_EXT_MIME } from "./lib/files"
 import { kwFreqs } from "./lib/keywords"
+import { isActionable, isFlagged } from "./lib/review"
 import { ToastHost, toast } from "./components/Toast"
 import { NotificationBadge } from "./components/NotificationBadge"
 import { AnalysisRequiredGate } from "./components/AnalysisRequiredGate"
@@ -384,9 +385,11 @@ function App() {
         try {
             const landed = await analyse(jdText, { landOn: null })
             if (!landed) return // analyse() already surfaced the error
-            const acceptAll = Object.fromEntries(
-                Object.entries(landed.result.rewrites || {}).flatMap(([, items]) => items.map(item => [item.id, true]))
-            )
+            // flagged rewrites claim what the original doesn't, so they stay out of a
+            // cv nobody has reviewed yet
+            const items = Object.values(landed.result.rewrites || {}).flat().filter(isActionable)
+            const flagged = items.filter(isFlagged).length
+            const acceptAll = Object.fromEntries(items.filter(item => !isFlagged(item)).map(item => [item.id, true]))
             await api.post(`/analysis/${landed.analysisId}/decisions`, { decisions: acceptAll })
             setDecisions(acceptAll)
             const res = await api.post("/generate/cv", {
@@ -399,7 +402,9 @@ function App() {
                 acc_map: {},
             })
             setDocs({ cv: res.data.cv_text, cover_letter: "" })
-            toast("New attempt analysed and Tailored CV generated from Job Matching")
+            toast(flagged
+                ? `Tailored CV generated. ${flagged} flagged suggestion${flagged === 1 ? " was" : "s were"} left out, review ${flagged === 1 ? "it" : "them"} under Suggestions`
+                : "New attempt analysed and Tailored CV generated from Job Matching")
             setView("Tailored CV")
         } catch (err) {
             toast(getError(err), "error")

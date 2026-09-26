@@ -348,6 +348,15 @@ html, body { font-family: var(--font-ui), sans-serif; color: var(--c-text); back
     gap: 0.4rem;
 }
 .reasoning-row svg { flex-shrink: 0; margin-top: 0.15rem; }
+
+/* what the claim checks found on a rewrite */
+.claim-flags { border-top: 1px solid var(--c-border); padding: 0.7rem 1rem; display: flex; flex-direction: column; gap: 0.45rem; background: var(--c-warning-bg); }
+.claim-flag { display: flex; align-items: flex-start; gap: 0.45rem; font-size: 0.82rem; line-height: 1.5; color: var(--c-text); margin: 0; }
+.claim-flag svg { flex-shrink: 0; margin-top: 0.2rem; color: var(--c-warning); }
+.critic-note { display: flex; align-items: flex-start; gap: 0.4rem; margin: 0; padding: 0.6rem 1rem; border-top: 1px solid var(--c-border); font-size: 0.78rem; color: var(--c-text-muted); }
+.critic-note svg { flex-shrink: 0; margin-top: 0.15rem; }
+.guard-summary { display: flex; align-items: center; gap: 0.4rem; margin: -0.5rem 0 var(--sp-2); font-size: 0.84rem; color: var(--c-text-muted); }
+.guard-summary svg { flex-shrink: 0; color: var(--c-primary-dark); }
 .decision-bar { padding: 0.5rem 1rem; border-top: 1px solid #E8EAED; font-size: 0.74rem; font-weight: 700; }
 .decision-bar.accepted { background: #15C39A; color: #FFFFFF; }
 .decision-bar.dismissed { background: #fee2e2; color: #991b1b; }
