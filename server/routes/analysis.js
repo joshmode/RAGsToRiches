@@ -87,27 +87,17 @@ async function run(engineUrl, jobId, payload) {
             api_key: apiKey,
         }
 
-        // alongside the analysis, not after 
-        const [resp, gap] = await Promise.all([
-            fetchEngine(`${engineUrl}/analyse`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-            }),
-            kwGap(
-                engineUrl, payload.resume_json, payload.job_description,
-                engineProvider, payload.local_endpoint, apiKey,
-            ),
-        ])
+        // analyse() reads the jd once and returns the job fit with the rewrites,
+        // so there's no second model call to make or to disagree with
+        const resp = await fetchEngine(`${engineUrl}/analyse`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        })
         if (!resp.ok) throw new Error((await resp.json()).error || "Analysis failed.")
         const results = await resp.json()
         results.parsed_resume = payload.resume_json
         results.job_description = payload.job_description || ""
-        // analyse()'s own kw extraction wins, only take what it doesn't produce
-        if (gap.company) results.company = gap.company
-        if (typeof gap.match_pct === "number") results.match_pct = gap.match_pct
-        if (gap.strong_matches) results.strong_matches = gap.strong_matches
-        if (gap.tailoring_tips) results.tailoring_tips = gap.tailoring_tips
         const score = typeof results.score === "object" ? results.score.total || 0 : results.score || 0
         const hash = contentHash({
             resumeId: payload.resume_id, jobDescription: payload.job_description,
@@ -257,7 +247,8 @@ router.post("/run", requireAuth, llmLimiter, (req, res) => {
     res.status(202).json({ job_id: row.lastInsertRowid, status: "queued" })
 })
 
-// the cheap kw gap compare-resume-jd already does reshaped for KeywordGap
+// the job fit on its own, for attempts that skip analyse(). the jd read is cached
+// engine-side, so this is free when the same jd was analysed before
 async function kwGap(engineUrl, resumeJson, jobDescription, engineProvider, localEndpoint, apiKey) {
     if (!jobDescription || !jobDescription.trim()) return {}
     try {
@@ -272,10 +263,11 @@ async function kwGap(engineUrl, resumeJson, jobDescription, engineProvider, loca
         if (!res.ok) return {}
         const data = await res.json()
         return {
-            jd_keywords: [...(data.strong_matches || []), ...(data.missing_skills || [])],
-            missing_keywords: data.missing_skills || [],
-            match_pct: data.match_pct || 0,
+            jd_keywords: data.jd_keywords || [],
+            missing_keywords: data.missing_keywords || [],
             strong_matches: data.strong_matches || [],
+            keyword_frequencies: data.keyword_frequencies || {},
+            match_pct: typeof data.match_pct === "number" ? data.match_pct : null,
             tailoring_tips: data.tailoring_tips || [],
             company: data.company || "",
         }
@@ -394,7 +386,8 @@ router.post("/:id/refresh-jd", requireAuth, llmLimiter, async (req, res) => {
         if (!jd.trim()) {
             out.jd_keywords = []
             out.missing_keywords = []
-            out.match_pct = 0
+            out.keyword_frequencies = {}
+            out.match_pct = null
             out.strong_matches = []
             out.tailoring_tips = []
             out.company = ""

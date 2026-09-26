@@ -58,7 +58,7 @@ def test_chunked_rewrites_carry_the_figure_check(monkeypatch):
         lambda *a, **k: '[{"rewritten": "Cut costs by 30%", "framework_used": "STAR", "severity": "red"},'
                         ' {"rewritten": "Shipped the API", "framework_used": "STAR", "severity": "red"}]',
     )
-    out = analyser.rewrite_chunk([("Cut costs", []), ("Shipped the API", [])], [], "gemini", "")
+    out = analyser.rewrite_chunk([("Cut costs", []), ("Shipped the API", [])], "gemini", "")
     assert out[0]["new_claims"] == ["30%"]
     assert "new_claims" not in out[1]
 
@@ -267,14 +267,3 @@ def test_qualitative_critic_normalises_an_unknown_kind(monkeypatch):
     out = analyser.run_qualitative_critic([("Helped X", "Led X")], "gemini", "")
     assert out[0]["kind"] == "role"
 
-
-# -------------------------------------------------------------- keyword match
-
-def test_keywords_ending_in_symbols_are_found():
-    text = "Shipped services in C++ and C#, then ported them to .NET"
-    assert analyser.kw_freqs(["C++", "C#", ".NET"], text) == {"C++": 1, "C#": 1, ".NET": 1}
-    assert all(analyser._kw_in_resume(kw, text.lower()) for kw in ("C++", "C#", ".NET"))
-
-
-def test_a_short_keyword_does_not_match_inside_a_longer_one():
-    assert analyser.kw_freqs(["C", "Java"], "Wrote C++ and JavaScript") == {}

@@ -10,6 +10,7 @@ import json
 import pytest
 
 import analyser
+import job_fit
 from parser import ParsedResume
 
 
@@ -17,9 +18,9 @@ from parser import ParsedResume
 def offline(monkeypatch):
     """A pipeline with no network: canned rewrites and canned retrieval."""
     def fake_llm_call(user_prompt="", system_prompt="", **kwargs):
-        # Keyword extraction asks for an array of strings.
-        if "Extract every technical skill" in user_prompt:
-            return json.dumps(["python", "docker"])
+        # The one read of the job description asks for an object.
+        if "Read this job description" in user_prompt:
+            return json.dumps({"keywords": ["python", "docker"], "company": "Acme", "tips": []})
         # Chunked rewrite: one object per numbered bullet in the prompt.
         count = user_prompt.count("[") if "BULLETS TO REWRITE" in user_prompt else 1
         count = max(1, count)
@@ -34,6 +35,7 @@ def offline(monkeypatch):
         ])
 
     monkeypatch.setattr(analyser, "llm_call", fake_llm_call)
+    monkeypatch.setattr(job_fit, "llm_call", fake_llm_call)
     monkeypatch.setattr(analyser, "query_fw", lambda text, n_results=2: [])
     return fake_llm_call
 

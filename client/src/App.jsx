@@ -226,7 +226,6 @@ function App() {
             })
             const newResult = {
                 ...gen.data.results, parsed_resume: upload.data.parsed, job_description: jobDescription, raw_text: upload.data.parsed.raw_text,
-                keyword_frequencies: kwFreqs(gen.data.results.strong_matches || [], upload.data.parsed.raw_text),
             }
             setResult(newResult)
             setAnalysisId(gen.data.analysis_id)
@@ -298,11 +297,7 @@ function App() {
             const companyToSend = companyOverride ?? jobMatch.company
             if (companyToSend) payload.company = companyToSend
             const res = await api.post(`/analysis/${id}/refresh-jd`, payload)
-            const updated = {
-                ...result,
-                ...res.data.results,
-                keyword_frequencies: kwFreqs(res.data.results.strong_matches || [], result.raw_text),
-            }
+            const updated = { ...result, ...res.data.results }
             setResult(updated)
             setDocs(prev => ({ ...prev, cover_letter: res.data.cover_letter_text || "" }))
             setJobDescription(jdText)

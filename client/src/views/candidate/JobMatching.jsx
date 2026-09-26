@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react"
 import { Building2, FileEdit, Mail, RotateCw } from "lucide-react"
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
-import { kwFreqs } from "../../lib/keywords"
 import { KeywordGap } from "./KeywordGap"
 
 export function JobMatching({ result, provider, localEndpoint, jobMatch, setJobMatch, onReanalyse, onGenerateCV, onGenerateCoverLetter, analysing, busyAction }) {
@@ -57,11 +56,6 @@ export function JobMatching({ result, provider, localEndpoint, jobMatch, setJobM
     const profileError = liProfile?.error
     const activeJD = scraped || result.job_description || ""
     const anyShortcutBusy = analysing || busyAction !== "" || compareBusy
-    const matchedKeywordResult = comparison ? {
-        jd_keywords: [...(comparison.strong_matches || []), ...(comparison.missing_skills || [])],
-        missing_keywords: comparison.missing_skills || [],
-        keyword_frequencies: kwFreqs(comparison.strong_matches || [], result.raw_text),
-    } : null
 
     return <section className="job-matching-page">
         <h2 className="view-title">Job Matching</h2>
@@ -79,16 +73,17 @@ export function JobMatching({ result, provider, localEndpoint, jobMatch, setJobM
 
         {comparison && <div className="job-match-results">
             <div className="card job-match-score-card">
-                <span className="section-label">Compatibility Score</span>
-                <p className="metric-value">{comparison.match_pct || 0}%</p>
+                <span className="section-label">Job Fit</span>
+                <p className="metric-value">{comparison.match_pct != null ? `${comparison.match_pct}%` : "—"}</p>
+                <p className="muted">Share of the job description's keywords your resume already mentions.</p>
                 <p><b>Strong matches:</b> {(comparison.strong_matches || []).join(", ") || "None"}</p>
-                <p><b>Missing skills:</b> {(comparison.missing_skills || []).join(", ") || "None"}</p>
+                <p><b>Missing skills:</b> {(comparison.missing_keywords || []).join(", ") || "None"}</p>
                 <p><b>Tailoring tips:</b> {(comparison.tailoring_tips || []).join(" · ") || "None"}</p>
                 {company && <p className="job-match-company"><Building2 size={13} /> {company}</p>}
             </div>
 
             <h3 className="doc-subhead">Matched Keyword Gap</h3>
-            <KeywordGap result={matchedKeywordResult} />
+            <KeywordGap result={comparison} />
 
             <div className="job-match-shortcuts">
                 <button className="job-match-action" onClick={() => onReanalyse(activeJD)} disabled={anyShortcutBusy}>

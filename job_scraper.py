@@ -16,7 +16,6 @@ try:
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
 
-from router import llm_call
 
 
 _JD_SELECTORS = [
@@ -327,33 +326,3 @@ def fetch_linkedin_profile(access_token: str) -> dict:
         return resp.json()
     except Exception as e:
         return {"error": str(e)}
-
-
-def compare_resume_jd(resume_text: str, jd_text: str, provider: str, local_endpoint: str, model: str = "", api_key: str = "") -> dict:
-    sys_prompt = (
-        "You are a resume-to-job-description matching expert. "
-        "Compare the candidate's resume against the job description. "
-        "Return ONLY valid JSON with this structure, no explanation, no reasoning, no "
-        "preamble, nothing before or after the JSON:\n"
-        '{"match_pct": 72, "missing_skills": ["skill1", "skill2"], '
-        '"strong_matches": ["skill1", "skill2"], '
-        '"tailoring_tips": ["tip1", "tip2"], '
-        '"company": "Company Name if detectable"}'
-    )
-
-    usr_prompt = (
-        f"JOB DESCRIPTION:\n{jd_text[:3000]}\n\n"
-        f"RESUME:\n{resume_text[:3000]}\n\n"
-        "Analyse how well this resume matches the job description."
-    )
-
-    try:
-        from analyser import _parse_json
-        # generous budget, same reason as extract_jd_kws
-        raw = llm_call(user_prompt=usr_prompt, system_prompt=sys_prompt,
-                       provider=provider, local_endpoint=local_endpoint,
-                       model=model, max_tokens=4096, api_key=api_key)
-        return _parse_json(raw)
-    except Exception as e:
-        return {"match_pct": 0, "missing_skills": [], "strong_matches": [],
-                "tailoring_tips": [], "error": str(e)}

@@ -2,7 +2,6 @@ from collections.abc import Callable
 from typing import Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
-import json
 import os
 import re
 import time
@@ -11,6 +10,8 @@ from dotenv import load_dotenv
 
 from claims import has_new_claims as _has_new_claims
 from claims import new_quantitative_claims, verb_escalation
+from job_fit import jd_profile, job_fit
+from llm_output import parse_json as _parse_json
 from prompt_registry import prompt_set_version, prompt_versions, register
 from vector_db import query_fw
 from parser import ParsedResume
@@ -32,80 +33,6 @@ _BANNED_WORDS = (
     "ecosystem, empower, foster, game-changer, best-in-class, world-class, "
     "bleeding-edge, thought leader"
 )
-
-
-def _kw_pattern(kw: str) -> re.Pattern:
-    """the keyword as a whole token. \\b needs a word character on one side, so
-    "C++", "C#" and ".NET" never matched, and "C" matched inside "C++" """
-    return re.compile(r'(?<![a-z0-9])' + re.escape(kw.lower().strip()) + r'(?![a-z0-9+#])')
-
-
-def _kw_in_resume(kw: str, resume_lower: str) -> bool:
-    return bool(_kw_pattern(kw).search(resume_lower))
-
-
-def kw_freqs(jd_keywords: list[str], resume_text: str) -> dict[str, int]:
-    lower = resume_text.lower()
-    freqs = {}
-    for kw in jd_keywords:
-        hits = _kw_pattern(kw).findall(lower)
-        if hits:
-            freqs[kw] = len(hits)
-    return freqs
-
-
-_THINK_BLOCK_RE = re.compile(r'<think(?:ing)?\b[^>]*>.*?</think(?:ing)?>', re.IGNORECASE | re.DOTALL)
-
-
-def _parse_json(raw: str) -> Any:
-    """extract json from llm output, stripping reasoning traces, markdown fences and filler."""
-    # reasoning models still emit a <think>...</think> block sometimes even when told not to,
-    # strip it so the parse below doesn't mistake it for the answer
-    cleaned = _THINK_BLOCK_RE.sub('', raw).strip()
-
-    if cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        cleaned = "\n".join(lines).strip()
-
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        decoder = json.JSONDecoder()
-        starts = [idx for idx, char in enumerate(cleaned) if char in "{["]
-        for idx in starts:
-            try:
-                value, _ = decoder.raw_decode(cleaned[idx:])
-                if isinstance(value, (dict, list)):
-                    return value
-            except json.JSONDecodeError:
-                continue
-        raise
-
-
-def extract_jd_kws(job_desc: str, provider: str, local_endpoint: str, model: str = "", api_key: str = "") -> list[str]:
-    if not job_desc.strip():
-        return []
-
-    prompt = (
-        "Extract every technical skill, tool, framework, methodology, certification, "
-        "and domain-specific keyword from this job description. "
-        "Return ONLY a JSON array of short strings — no explanation, no reasoning, no "
-        "preamble, no markdown fences, nothing before or after the array. "
-        'Example output: ["Python", "Docker", "CI/CD", "REST API", "agile"]\n\n'
-        f"Job description:\n{job_desc}"
-    )
-
-    # generous budget bc free-tier models can burn most of their output on reasoning
-    raw = llm_call(user_prompt=prompt, provider=provider, local_endpoint=local_endpoint,
-                   model=model, max_tokens=4096, api_key=api_key)
-    parsed = _parse_json(raw)
-    if not isinstance(parsed, list):
-        raise ValueError(f"expected a JSON array of keywords, got {type(parsed).__name__}")
-    return [str(kw).strip() for kw in parsed if isinstance(kw, (str, int, float)) and str(kw).strip()]
 
 
 def _critic_creds(provider: str, model: str, api_key: str, local_endpoint: str) -> tuple[str, str, str, str]:
@@ -337,13 +264,11 @@ _BATCH_INDEX_RULE = register("batch_index_rule", (
 ))
 
 
-def _build_rewrite_prompts(bullet: str, frameworks: list[Any], missing_kws: list[str]) -> tuple[str, str]:
+def _build_rewrite_prompts(bullet: str, frameworks: list[Any]) -> tuple[str, str]:
     fw_ctx = "\n\n".join(f.document for f in frameworks)
-    kw_hint = ", ".join(missing_kws[:12]) if missing_kws else "none"
 
     usr_prompt = (
         f"FRAMEWORK GUIDANCE (apply the most relevant one):\n{fw_ctx}\n\n"
-        f"ATS KEYWORDS TO WEAVE IN NATURALLY (only if genuinely relevant):\n{kw_hint}\n\n"
         f"BULLET TO REWRITE:\n{bullet}\n\n"
         f"Respond with this exact JSON structure:\n{_RESULT_SCHEMA}\n"
         f"{_SEVERITY_GUIDE}"
@@ -390,14 +315,13 @@ def _finalise(result: dict, original: str) -> dict:
 def rewrite_item(
     bullet: str,
     frameworks: list[Any],
-    missing_kws: list[str],
     provider: str,
     local_endpoint: str,
     use_critic: bool = False,
     model: str = "",
     api_key: str = "",
 ) -> dict:
-    sys_prompt, usr_prompt = _build_rewrite_prompts(bullet, frameworks, missing_kws)
+    sys_prompt, usr_prompt = _build_rewrite_prompts(bullet, frameworks)
 
     try:
         raw = llm_call(user_prompt=usr_prompt, system_prompt=sys_prompt,
@@ -480,7 +404,6 @@ def _align_batch(originals: list[str], parsed: Any) -> list[dict]:
 
 def _rewrite_each(
     items: list[tuple[str, list[Any]]],
-    missing_kws: list[str],
     provider: str,
     local_endpoint: str,
     use_critic: bool,
@@ -490,7 +413,7 @@ def _rewrite_each(
     """One call per bullet, side by side. The provider semaphore still caps them."""
     with ThreadPoolExecutor(max_workers=min(4, len(items))) as pool:
         futures = [
-            pool.submit(rewrite_item, text, fws, missing_kws, provider, local_endpoint, use_critic, model=model, api_key=api_key)
+            pool.submit(rewrite_item, text, fws, provider, local_endpoint, use_critic, model=model, api_key=api_key)
             for text, fws in items
         ]
         return [future.result() for future in futures]
@@ -498,7 +421,6 @@ def _rewrite_each(
 
 def rewrite_chunk(
     items: list[tuple[str, list[Any]]],
-    missing_kws: list[str],
     provider: str,
     local_endpoint: str,
     use_critic: bool = False,
@@ -509,9 +431,7 @@ def rewrite_chunk(
         return []
     if len(items) == 1:
         text, fws = items[0]
-        return [rewrite_item(text, fws, missing_kws, provider, local_endpoint, use_critic, model=model, api_key=api_key)]
-
-    kw_hint = ", ".join(missing_kws[:12]) if missing_kws else "none"
+        return [rewrite_item(text, fws, provider, local_endpoint, use_critic, model=model, api_key=api_key)]
 
     # each guide once, numbered, and each bullet names the guides retrieved for it.
     # merging them into one pool lost the per-bullet grounding the retrieval is for
@@ -528,7 +448,6 @@ def rewrite_chunk(
 
     usr_prompt = (
         f"FRAMEWORK GUIDANCE (apply the most relevant of the guides listed with each bullet):\n{fw_ctx}\n\n"
-        f"ATS KEYWORDS TO WEAVE IN NATURALLY (only if genuinely relevant):\n{kw_hint}\n\n"
         f"BULLETS TO REWRITE — {len(items)} independent bullets, numbered in order. "
         f"Rewrite EVERY one, keep the same order, do not merge or skip any:\n{bullets_block}\n\n"
         f"Respond with ONLY a JSON array of exactly {len(items)} objects, one per bullet "
@@ -550,11 +469,11 @@ def rewrite_chunk(
 
     except Exception as e:
         print(f"chunk rewrite failed ({len(items)} bullets), falling back to per-bullet calls: {e}")
-        return _rewrite_each(items, missing_kws, provider, local_endpoint, use_critic, model, api_key)
+        return _rewrite_each(items, provider, local_endpoint, use_critic, model, api_key)
 
     if use_critic:
         for i, (text, fws) in enumerate(items):
-            sys_prompt, usr_prompt_single = _build_rewrite_prompts(text, fws, missing_kws)
+            sys_prompt, usr_prompt_single = _build_rewrite_prompts(text, fws)
             results[i] = _run_critic(
                 text, results[i].get("rewritten", text), results[i],
                 usr_prompt_single, sys_prompt, provider, local_endpoint, model, api_key=api_key,
@@ -856,12 +775,32 @@ def analyse(
     t_start = time.perf_counter()
     emit("started")
 
-    # kw extraction run concurrently 
-    t_kw = time.perf_counter()
-    kw_future = None
-    kw_pool = ThreadPoolExecutor(max_workers=1)
-    if job_description.strip():
-        kw_future = kw_pool.submit(extract_jd_kws, job_description, provider, local_endpoint, model, api_key)
+    # the one read of the job description runs alongside everything else. the
+    # rewrites don't wait for it any more, they never needed its keywords
+    def _read_jd():
+        started = time.perf_counter()
+        profile = jd_profile(job_description, provider, local_endpoint, model=model, api_key=api_key)
+        return profile, time.perf_counter() - started
+
+    jd_pool = ThreadPoolExecutor(max_workers=1)
+    jd_future = jd_pool.submit(_read_jd) if job_description.strip() else None
+    jd_read: dict = {}
+    jd_failed = False
+    t_kw = 0.0
+    jd_joined = False
+
+    def join_jd(block: bool) -> None:
+        nonlocal jd_read, jd_failed, t_kw, jd_joined
+        if jd_joined or (jd_future is not None and not block and not jd_future.done()):
+            return
+        jd_joined = True
+        if jd_future is not None:
+            try:
+                jd_read, t_kw = jd_future.result()
+            except Exception as kw_err:
+                print(f"job description read failed: {kw_err}")
+                jd_failed = True
+        emit("keywords", found=len(jd_read.get("keywords", [])), failed=jd_failed)
 
     rewrites: dict[str, list[dict]] = {}
 
@@ -886,22 +825,7 @@ def analyse(
                 fw_cache_local[text] = query_fw(text, n_results=3)
     t_retrieval = time.perf_counter() - t_retrieval
     emit("retrieved", retrieval_ms=int(t_retrieval * 1000))
-
-    # join the keyword extraction started before the local work
-    jd_kws: list[str] = []
-    kw_extraction_failed = False
-    if kw_future is not None:
-        try:
-            jd_kws = kw_future.result()
-        except Exception as kw_err:
-            print(f"kw extraction failed: {kw_err}")
-            kw_extraction_failed = True
-    kw_pool.shutdown(wait=False)
-    t_kw = time.perf_counter() - t_kw
-    emit("keywords", found=len(jd_kws), failed=kw_extraction_failed)
-
-    resume_lower = resume.raw_text.lower()
-    missing = [kw for kw in jd_kws if not _kw_in_resume(kw, resume_lower)]
+    join_jd(block=False)
 
     def _label_rw(sec, unit):
         text = unit["text"]
@@ -938,7 +862,7 @@ def analyse(
 
     def _do_chunk(chunk_jobs):
         items = [(unit["text"], fw_cache_local[unit["text"]]) for _sec, _i, unit in chunk_jobs]
-        chunk_results = rewrite_chunk(items, missing, provider, local_endpoint, use_critic, model=model, api_key=api_key)
+        chunk_results = rewrite_chunk(items, provider, local_endpoint, use_critic, model=model, api_key=api_key)
         out = []
         for (sec, i, unit), rw in zip(chunk_jobs, chunk_results):
             rw = dict(rw)
@@ -983,14 +907,17 @@ def analyse(
                 total=len(chunks),
                 rewrites=[rw for _sec, _i, rw in chunk_out],
             )
+            join_jd(block=False)
     t_rewrite = time.perf_counter() - t_rewrite
+    join_jd(block=True)
+    jd_pool.shutdown(wait=False)
 
     for sec, items in results_by_sec.items():
         items.sort(key=lambda x: x[0])
         rewrites[sec] = [rw for _, rw in items]
 
     score = calc_score(resume, rewrites)
-    freqs = kw_freqs(jd_kws, resume.raw_text)
+    fit = job_fit(resume.raw_text, jd_read)
     t_total = time.perf_counter() - t_start
     critic_counts: dict[str, int] = {}
     guard_counts = {"verb_escalation": 0, "overstated": 0, "new_claims": 0, "withheld": 0}
@@ -1015,10 +942,10 @@ def analyse(
         "contact":             resume.contact,
         "sections":            resume.sections,
         "rewrites":            rewrites,
-        "jd_keywords":         jd_kws,
-        "missing_keywords":    missing,
-        "keyword_frequencies": freqs,
-        "keyword_extraction_failed": kw_extraction_failed,
+        # jd_keywords, missing_keywords, strong_matches, keyword_frequencies,
+        # match_pct, company and tailoring_tips, all from the one read
+        **fit,
+        "keyword_extraction_failed": jd_failed,
         "score":               score,
         "warnings":            resume.warnings,
         "ocr_used":            resume.ocr_used,

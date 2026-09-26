@@ -12,9 +12,10 @@ const router = Router()
 const PROVIDER_CHOICES = new Set(["default", "gemini", "claude", "chatgpt", "local"])
 const COMPARE_CACHE_TTL_MINUTES = parseInt(process.env.ANALYSIS_CACHE_TTL_MINUTES || "60", 10)
 
-// same inputs = same prompt, replay the last result
+// same inputs = same prompt, replay the last result. v2 is the keyword-coverage
+// shape, older rows hold the llm's guessed match and mustn't be replayed
 function compareHash(resume, jd, provider, endpoint) {
-    return crypto.createHash("sha256").update(`${provider || ""}|${endpoint || ""}|${resume || ""}|${jd || ""}`).digest("hex")
+    return crypto.createHash("sha256").update(`v2|${provider || ""}|${endpoint || ""}|${resume || ""}|${jd || ""}`).digest("hex")
 }
 
 router.post("/jd", requireAuth, async (req, res) => {

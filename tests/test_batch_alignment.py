@@ -31,7 +31,7 @@ def _chunk(monkeypatch, batch_reply, single_reply=None):
 
     monkeypatch.setattr(analyser, "llm_call", fake)
     items = [(MIGRATION, []), (KAFKA, []), (TESTS, [])]
-    return analyser.rewrite_chunk(items, [], "gemini", ""), calls
+    return analyser.rewrite_chunk(items, "gemini", ""), calls
 
 
 def test_indexes_put_swapped_answers_back_in_place(monkeypatch):
@@ -95,7 +95,7 @@ def test_the_fallback_calls_run_side_by_side(monkeypatch):
         return json.dumps({"rewritten": "Rewritten bullet", "severity": "yellow"})
 
     monkeypatch.setattr(analyser, "llm_call", fake)
-    out = analyser.rewrite_chunk([(MIGRATION, []), (KAFKA, []), (TESTS, [])], [], "gemini", "")
+    out = analyser.rewrite_chunk([(MIGRATION, []), (KAFKA, []), (TESTS, [])], "gemini", "")
     assert [item["rewritten"] for item in out] == ["Rewritten bullet"] * 3
 
 
@@ -120,7 +120,7 @@ def test_each_bullet_names_its_own_frameworks(monkeypatch):
     monkeypatch.setattr(analyser, "llm_call", fake)
     analyser.rewrite_chunk(
         [(MIGRATION, [hit("XYZ"), hit("STAR"), hit("Verbs")]), (KAFKA, [hit("STAR"), hit("Metrics")])],
-        [], "gemini", "",
+        "gemini", "",
     )
     prompt = prompts[0]
     assert f"[0] (guides: F1, F2, F3) {MIGRATION}" in prompt

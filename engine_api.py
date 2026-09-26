@@ -31,6 +31,7 @@ from router import _is_key_placeholder
 from document_export import generate_docx, generate_pdf
 from pdf_highlight import highlight_pdf
 import job_scraper
+import job_fit
 import feedback
 
 app = Flask(__name__)
@@ -294,7 +295,12 @@ def compare_endpoint():
     local_endpoint = data.get("local_endpoint", "")
     api_key = data.get("api_key", "")
 
-    result = job_scraper.compare_resume_jd(resume_text, jd_text, provider, local_endpoint, model=model, api_key=api_key)
+    # the cached read of the jd plus a keyword match, so this agrees with the analysis
+    try:
+        result = job_fit.compare(resume_text, jd_text, provider, local_endpoint, model=model, api_key=api_key)
+    except Exception as err:
+        app.logger.warning("job description read failed: %s", err)
+        return jsonify({"error": "The job description couldn't be read. Please try again."}), 502
     return jsonify(result)
 
 
