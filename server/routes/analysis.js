@@ -14,11 +14,27 @@ import { saveRev } from "../documents.js"
 const router = Router()
 const ANALYSIS_CACHE_TTL_MINUTES = parseInt(process.env.ANALYSIS_CACHE_TTL_MINUTES || "60", 10)
 
-// same inputs = same result, cache it
-function contentHash({ resumeId, jobDescription, provider, model, useCritic, localEndpoint }) {
+// same inputs = same result, cache it. keyed on the file's bytes, not on the resume
+// row, which used to be new on every upload so the cache never hit from the ui
+function contentHash({ fileKey, jobDescription, provider, useCritic, localEndpoint }) {
     return crypto.createHash("sha256")
-        .update(`${resumeId}|${provider || ""}|${model || ""}|${useCritic ? "1" : "0"}|${localEndpoint || ""}|${jobDescription || ""}`)
+        .update(`${fileKey}|${provider || ""}|${useCritic ? "1" : "0"}|${localEndpoint || ""}|${jobDescription || ""}`)
         .digest("hex")
+}
+
+// rows from before file hashing fall back to their own id
+function fileKey(resume) {
+    return resume.file_hash || `resume:${resume.id}`
+}
+
+// the full parse stored on a resume row. older rows kept only the sections
+function storedParse(resume) {
+    try {
+        const parsed = JSON.parse(resume?.parsed_json || "null")
+        return parsed && parsed.sections && typeof parsed.raw_text === "string" ? parsed : null
+    } catch {
+        return null
+    }
 }
 const exts = new Set([".pdf", ".docx", ".doc", ".odt", ".txt", ".md", ".zip"])
 const upload = multer({
@@ -38,6 +54,21 @@ router.post("/upload", requireAuth, upload.single("file"), async (req, res) => {
 
     const engineUrl = req.app.locals.engineUrl
     const fileB64 = req.file.buffer.toString("base64")
+    const name = req.file.originalname.toLowerCase()
+    // the extension picks the parser, so the same bytes as .md and .txt aren't the same file
+    const fileHash = crypto.createHash("sha256")
+        .update(`${name.slice(name.lastIndexOf("."))}|`).update(req.file.buffer).digest("hex")
+    const db = getDb()
+
+    // the same file again: reuse its row and parse, so re-analysing doesn't re-parse
+    // (or re-OCR) it or store another copy
+    const existing = db.prepare(
+        "SELECT * FROM resumes WHERE user_id = ? AND file_hash = ? ORDER BY id DESC LIMIT 1"
+    ).get(req.user.id, fileHash)
+    const known = storedParse(existing)
+    if (known) {
+        return res.json({ resume_id: existing.id, parsed: known, filename: existing.filename, reused: true })
+    }
 
     try {
         const resp = await fetch(`${engineUrl}/parse`, {
@@ -49,9 +80,13 @@ router.post("/upload", requireAuth, upload.single("file"), async (req, res) => {
         if (!resp.ok) return res.status(resp.status).json(await resp.json())
         const parsed = await resp.json()
 
-        const row = getDb().prepare(
-            "INSERT INTO resumes (user_id, filename, raw_bytes, parsed_json, created_at) VALUES (?, ?, ?, ?, datetime('now'))"
-        ).run(req.user.id, req.file.originalname, req.file.buffer, JSON.stringify(parsed.sections))
+        if (existing) {
+            db.prepare("UPDATE resumes SET parsed_json = ? WHERE id = ?").run(JSON.stringify(parsed), existing.id)
+            return res.json({ resume_id: existing.id, parsed, filename: existing.filename })
+        }
+        const row = db.prepare(
+            "INSERT INTO resumes (user_id, filename, raw_bytes, parsed_json, file_hash, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))"
+        ).run(req.user.id, req.file.originalname, req.file.buffer, JSON.stringify(parsed), fileHash)
 
         res.json({
             resume_id: row.lastInsertRowid,
@@ -99,9 +134,8 @@ async function run(engineUrl, jobId, payload) {
         results.job_description = payload.job_description || ""
         const score = typeof results.score === "object" ? results.score.total || 0 : results.score || 0
         const hash = contentHash({
-            resumeId: payload.resume_id, jobDescription: payload.job_description,
-            provider: payload.provider, model: "", useCritic: payload.use_critic,
-            localEndpoint: payload.local_endpoint,
+            fileKey: payload.file_key || `resume:${payload.resume_id}`, jobDescription: payload.job_description,
+            provider: payload.provider, useCritic: payload.use_critic, localEndpoint: payload.local_endpoint,
         })
         const row = db.prepare(
             "INSERT INTO analyses (resume_id, user_id, results_json, job_description, provider, model, score_total, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
@@ -128,11 +162,13 @@ async function run(engineUrl, jobId, payload) {
 // default. This exists so a long analysis fills in as it goes rather than
 // landing all at once, which is most of the perceived latency.
 router.post("/stream", requireAuth, llmLimiter, async (req, res) => {
-    const { resume_json, job_description, provider, use_critic, local_endpoint, resume_id } = req.body
+    const { job_description, provider, use_critic, local_endpoint, resume_id } = req.body
     const resumeId = parseInt(resume_id)
-    if (!resumeId || !getResume(resumeId, req.user.id)) {
+    const resume = resumeId ? getResume(resumeId, req.user.id) : null
+    if (!resume) {
         return res.status(404).json({ error: "Resume not found." })
     }
+    const resume_json = storedParse(resume) || req.body.resume_json
     if (!PROVIDER_CHOICES.has(provider)) {
         return res.status(400).json({ error: "Unknown provider." })
     }
@@ -203,11 +239,14 @@ router.post("/stream", requireAuth, llmLimiter, async (req, res) => {
 })
 
 router.post("/run", requireAuth, llmLimiter, (req, res) => {
-    const { resume_json, job_description, provider, use_critic, local_endpoint, resume_id } = req.body
+    const { job_description, provider, use_critic, local_endpoint, resume_id } = req.body
     const resumeId = parseInt(resume_id)
-    if (!resumeId || !getResume(resumeId, req.user.id)) {
+    const resume = resumeId ? getResume(resumeId, req.user.id) : null
+    if (!resume) {
         return res.status(404).json({ error: "Resume not found." })
     }
+    // the parse the server stored, not a copy the client sends back
+    const resume_json = storedParse(resume) || req.body.resume_json
     if (!PROVIDER_CHOICES.has(provider)) {
         return res.status(400).json({ error: "Unknown provider." })
     }
@@ -223,11 +262,14 @@ router.post("/run", requireAuth, llmLimiter, (req, res) => {
     }
 
     // model is fixed per provider server-sid now never client-selected
-    const payload = { resume_id: resumeId, user_id: req.user.id, resume_json, job_description, provider, use_critic, local_endpoint }
+    const payload = {
+        resume_id: resumeId, user_id: req.user.id, resume_json, file_key: fileKey(resume),
+        job_description, provider, use_critic, local_endpoint,
+    }
     const db = getDb()
 
     if (ANALYSIS_CACHE_TTL_MINUTES > 0) {
-        const hash = contentHash({ resumeId, jobDescription: job_description, provider, model: "", useCritic: use_critic, localEndpoint: local_endpoint })
+        const hash = contentHash({ fileKey: payload.file_key, jobDescription: job_description, provider, useCritic: use_critic, localEndpoint: local_endpoint })
         const cached = db.prepare(
             `SELECT id FROM analyses WHERE user_id = ? AND content_hash = ? AND content_hash != '' AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 1`
         ).get(req.user.id, hash, `-${ANALYSIS_CACHE_TTL_MINUTES} minutes`)
@@ -277,11 +319,13 @@ async function kwGap(engineUrl, resumeJson, jobDescription, engineProvider, loca
 
 // never touches analyse() 
 router.post("/quick-cover-letter", requireAuth, llmLimiter, async (req, res) => {
-    const { resume_json, job_description, provider, local_endpoint, resume_id, company } = req.body
+    const { job_description, provider, local_endpoint, resume_id, company } = req.body
     const resumeId = parseInt(resume_id)
-    if (!resumeId || !getResume(resumeId, req.user.id)) {
+    const resume = resumeId ? getResume(resumeId, req.user.id) : null
+    if (!resume) {
         return res.status(404).json({ error: "Resume not found." })
     }
+    const resume_json = storedParse(resume) || req.body.resume_json
     if (!PROVIDER_CHOICES.has(provider)) {
         return res.status(400).json({ error: "Unknown provider." })
     }
@@ -392,8 +436,9 @@ router.post("/:id/refresh-jd", requireAuth, llmLimiter, async (req, res) => {
             out.company = ""
         }
         // only a resume_analysis hash feedscache, leave the other alone
-        const hash = row.attempt_type === "cover_letter_only" ? row.content_hash
-            : contentHash({ resumeId: row.resume_id, jobDescription: jd, provider, model: row.model, useCritic: false, localEndpoint: local_endpoint })
+        const resume = getResume(row.resume_id, req.user.id)
+        const hash = row.attempt_type === "cover_letter_only" || !resume ? row.content_hash
+            : contentHash({ fileKey: fileKey(resume), jobDescription: jd, provider, useCritic: false, localEndpoint: local_endpoint })
         db.prepare("UPDATE analyses SET job_description = ?, content_hash = ?, results_json = ? WHERE id = ?")
             .run(jd, hash, JSON.stringify(out), analysisId)
         // real new version, the old letter stays in history

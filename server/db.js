@@ -186,6 +186,13 @@ function initDb(db) {
         );
     `)
 
+    // identical bytes reuse one row, see /analysis/upload
+    let resumeCols = db.prepare("PRAGMA table_info(resumes)").all().map(c => c.name)
+    if (!resumeCols.includes("file_hash")) {
+        db.exec("ALTER TABLE resumes ADD COLUMN file_hash TEXT DEFAULT ''")
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_resumes_user_hash ON resumes(user_id, file_hash)")
+
     // CREATE TABLE is a no-op on an existing analyses table
     let cols = db.prepare("PRAGMA table_info(analyses)").all().map(c => c.name)
     if (!cols.includes("content_hash")) {
