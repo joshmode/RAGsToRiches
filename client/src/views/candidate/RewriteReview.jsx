@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, Check, CheckCircle2, ChevronLeft, ChevronRight, Info, Lightbulb, ShieldCheck, X, XCircle } from "lucide-react"
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
@@ -95,21 +95,29 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
         }
     }, [file, current?.key, actionable])
 
-    async function save(next) {
-        setDecisions(next)
-        setError("")
-        if (!analysisId) return
-        try {
-            await api.post(`/analysis/${analysisId}/decisions`, { decisions: next })
-        } catch (err) {
-            setError(`Couldn't save your decision: ${getError(err)}`)
-        }
+    // decisions show at once and save in the background. one request after another,
+    // so a quick change of mind can't land before the choice it replaced
+    const queueRef = useRef(Promise.resolve())
+    function persist(request) {
+        if (!analysisId) return  // still streaming, App saves these once the attempt has an id
+        queueRef.current = queueRef.current.then(request).then(
+            () => setError(""),
+            err => setError(`Couldn't save a decision: ${getError(err)}. It's still shown here, so try again.`),
+        )
     }
 
-    // deciding auto moves on to the next suggestion
-    async function decide(value) {
+    // every decision at once, for accept all and clear
+    function save(next) {
+        setDecisions(next)
+        persist(() => api.post(`/analysis/${analysisId}/decisions`, { decisions: next }))
+    }
+
+    // deciding auto moves on to the next suggestion, without waiting for the save
+    function decide(value) {
         if (!current) return
-        await save({ ...decisions, [current.key]: value })
+        const key = current.key
+        setDecisions({ ...decisions, [key]: value })
+        persist(() => api.put(`/analysis/${analysisId}/decisions/${encodeURIComponent(key)}`, { decision: value }))
         if (count > 1) goTo(active + 1)
     }
 
