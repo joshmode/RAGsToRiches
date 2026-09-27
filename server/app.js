@@ -28,8 +28,27 @@ const ENGINE_URL = process.env.ENGINE_URL || "http://localhost:5001"
 // correct client ips behind a reverse proxy
 app.set("trust proxy", 1)
 
+// the bundle is all same-origin files, so scripts come from here and nowhere else.
+// fonts are google's, the pdf viewer runs a worker, and pdf.js may hand embedded
+// fonts over as data: urls
 app.use(helmet({
-    contentSecurityPolicy: false, // same-origin spa bundle, the default csp blocks it
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", "https://fonts.googleapis.com"],
+            fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+            imgSrc: ["'self'", "data:", "blob:"],
+            workerSrc: ["'self'", "blob:"],
+            connectSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            frameAncestors: ["'none'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"],
+            // plain http on localhost would otherwise be upgraded and fail
+            upgradeInsecureRequests: process.env.NODE_ENV === "production" ? [] : null,
+        },
+    },
 }))
 
 const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")

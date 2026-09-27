@@ -58,12 +58,27 @@ export async function startApp(engineUrl) {
     }
 }
 
-// one signed-in user
+// one signed-in user, holding cookies the way a browser would
 export class Client {
     constructor(base) {
         this.base = base
-        this.token = ""
+        this.cookies = {}
         this.user = null
+    }
+
+    cookieHeader() {
+        return Object.entries(this.cookies).map(([name, value]) => `${name}=${value}`).join("; ")
+    }
+
+    remember(res) {
+        for (const line of res.headers.getSetCookie()) {
+            const [pair] = line.split(";")
+            const at = pair.indexOf("=")
+            const name = pair.slice(0, at).trim()
+            const value = pair.slice(at + 1).trim()
+            if (!value || /expires=thu, 01 jan 1970/i.test(line)) delete this.cookies[name]
+            else this.cookies[name] = value
+        }
     }
 
     async request(method, path, body, { raw = false, headers = {} } = {}) {
@@ -71,11 +86,12 @@ export class Client {
             method,
             headers: {
                 ...(body !== undefined && !(body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
-                ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+                ...(Object.keys(this.cookies).length ? { Cookie: this.cookieHeader() } : {}),
                 ...headers,
             },
             body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
         })
+        this.remember(res)
         if (raw) return res
         const text = await res.text()
         let data = text
@@ -91,7 +107,6 @@ export class Client {
     async register(username, role = "candidate") {
         const res = await this.post("/auth/register", { username, password: "correct-horse", display_name: username, role })
         if (res.status !== 201) throw new Error(`register failed: ${JSON.stringify(res.data)}`)
-        this.token = res.data.token
         this.user = res.data.user
         return this
     }

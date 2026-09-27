@@ -15,29 +15,57 @@ if (!JWT_SECRET) {
     throw new Error("JWT_SECRET is required in production.")
 }
 
-export function requireAuth(req, res, next) {
-    const header = req.headers.authorization
-    if (!header || !header.startsWith("Bearer ")) {
-        return res.status(401).json({ error: "Authentication required" })
-    }
+// the session is an httpOnly cookie, so no script on the page can read it. it was
+// a bearer token in localStorage, where any injected script could lift it
+export const SESSION_COOKIE = "rtr_session"
+const SESSION_DAYS = 7
 
-    const token = header.split(" ")[1]
+function cookieOptions(req) {
+    return { httpOnly: true, sameSite: "strict", secure: req.secure, path: "/api" }
+}
+
+export function setSessionCookie(req, res, user) {
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: `${SESSION_DAYS}d` })
+    // a guest's goes when the browser closes, an account's when the token expires
+    res.cookie(SESSION_COOKIE, token, {
+        ...cookieOptions(req),
+        ...(user.is_guest ? {} : { maxAge: SESSION_DAYS * 24 * 3600 * 1000 }),
+    })
+}
+
+export function clearSessionCookie(req, res) {
+    res.clearCookie(SESSION_COOKIE, cookieOptions(req))
+}
+
+function readCookie(req, name) {
+    for (const part of (req.headers.cookie || "").split(";")) {
+        const at = part.indexOf("=")
+        if (at !== -1 && part.slice(0, at).trim() === name) {
+            try { return decodeURIComponent(part.slice(at + 1).trim()) } catch { return "" }
+        }
+    }
+    return ""
+}
+
+// the signed-in user behind a request, or null
+export function sessionUser(req) {
+    const token = readCookie(req, SESSION_COOKIE)
+    if (!token) return null
     try {
         const decoded = jwt.verify(token, JWT_SECRET)
         // guests are purged well before their 7-day token expires, and anyone can
         // delete their account, so a valid signature isn't enough on its own
-        if (!getDb().prepare("SELECT 1 FROM users WHERE id = ?").get(decoded.id)) {
-            return res.status(401).json({ error: "Invalid or expired token" })
-        }
-        req.user = decoded
-        next()
+        return getDb().prepare("SELECT 1 FROM users WHERE id = ?").get(decoded.id) ? decoded : null
     } catch {
-        return res.status(401).json({ error: "Invalid or expired token" })
+        return null
     }
 }
 
-export function generateToken(payload) {
-    return jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" })
+export function requireAuth(req, res, next) {
+    const user = sessionUser(req)
+    if (!user) return res.status(401).json({ error: "Your session has ended. Please sign in again." })
+    req.user = user
+    next()
 }
 
 export function requireRole(role) {
@@ -47,16 +75,4 @@ export function requireRole(role) {
         }
         next()
     }
-}
-
-export function optionalAuth(req, _res, next) {
-    const header = req.headers.authorization
-    if (header && header.startsWith("Bearer ")) {
-        try {
-            req.user = jwt.verify(header.split(" ")[1], JWT_SECRET)
-        } catch {
-            req.user = null
-        }
-    }
-    next()
 }

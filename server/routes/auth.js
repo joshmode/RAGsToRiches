@@ -2,7 +2,7 @@ import { Router } from "express"
 import bcrypt from "bcrypt"
 import crypto from "crypto"
 import { deleteUser, getDb, sweepGuests } from "../db.js"
-import { generateToken, requireAuth } from "../middleware/auth.js"
+import { clearSessionCookie, requireAuth, sessionUser, setSessionCookie } from "../middleware/auth.js"
 import { guestLimiter } from "../middleware/rateLimit.js"
 
 const router = Router()
@@ -52,8 +52,8 @@ router.post("/register", async (req, res) => {
         is_guest: false,
     }
 
-    const token = generateToken(user)
-    res.status(201).json({ token, user })
+    setSessionCookie(req, res, user)
+    res.status(201).json({ user })
 })
 
 router.post("/login", async (req, res) => {
@@ -82,8 +82,8 @@ router.post("/login", async (req, res) => {
         is_guest: !!row.is_guest,
     }
 
-    const token = generateToken(user)
-    res.json({ token, user })
+    setSessionCookie(req, res, user)
+    res.json({ user })
 })
 
 // a real but throwaway account so every per-user feature works 
@@ -115,12 +115,22 @@ router.post("/guest", guestLimiter, async (req, res) => {
         is_guest: true,
     }
 
-    const token = generateToken(user)
-    res.status(201).json({ token, user })
+    setSessionCookie(req, res, user)
+    res.status(201).json({ user })
 })
 
-router.get("/me", requireAuth, (req, res) => {
-    res.json({ user: req.user })
+// the client can't read its own session cookie, so this is how it learns who it
+// is. nobody signed in is an answer, not an error
+router.get("/me", (req, res) => {
+    const user = sessionUser(req)
+    if (!user) return res.json({ user: null })
+    const { id, username, display_name, role, is_guest } = user
+    res.json({ user: { id, username, display_name, role, is_guest: !!is_guest } })
+})
+
+router.post("/logout", (req, res) => {
+    clearSessionCookie(req, res)
+    res.json({ ok: true })
 })
 
 // everything the account owns goes with it. a guest has no password to confirm
@@ -135,6 +145,7 @@ router.delete("/account", requireAuth, async (req, res) => {
         }
     }
     deleteUser(db, row.id)
+    clearSessionCookie(req, res)
     res.json({ ok: true })
 })
 

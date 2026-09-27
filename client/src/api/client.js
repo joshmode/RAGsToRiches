@@ -1,17 +1,10 @@
 import axios from "axios"
-import { getToken, clearSession } from "./session"
+import { sessionEnded } from "./session"
 
+// same origin, so the browser sends the session cookie with every request
 const api = axios.create({
     baseURL: "/api",
     timeout: 300000,
-})
-
-api.interceptors.request.use((config) => {
-    const token = getToken()
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
 })
 
 const MAX_429_RETRIES = 4
@@ -25,10 +18,9 @@ function sleep(ms) {
 api.interceptors.response.use(
     (res) => res,
     async (err) => {
-        // only reload on a 401 that HAD a token
-        if (err.response?.status === 401 && err.config?.headers?.Authorization) {
-            clearSession()
-            window.location.reload()
+        // the session is gone. a wrong password on sign-in is a 401 too, and isn't
+        if (err.response?.status === 401 && !String(err.config?.url || "").startsWith("/auth/")) {
+            sessionEnded()
             return Promise.reject(err)
         }
 

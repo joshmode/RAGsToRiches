@@ -85,7 +85,7 @@ describe("the streamed analysis", () => {
         const controller = new AbortController()
         const res = await fetch(`${app.base}/api/analysis/stream`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${alice.token}` },
+            headers: { "Content-Type": "application/json", Cookie: alice.cookieHeader() },
             body: JSON.stringify({ resume_id: resumeId, job_description: "Zig", provider: "demo" }),
             signal: controller.signal,
         })

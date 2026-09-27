@@ -1,4 +1,4 @@
-import { getToken } from "./session.js"
+import { sessionEnded } from "./session.js"
 
 /**
  * Split accumulated SSE text into complete events plus whatever is left over.
@@ -42,8 +42,8 @@ export function parseSSEBuffer(buffer) {
 /**
  * Run an analysis and receive progress events as they happen.
  *
- * EventSource only speaks GET and cannot send an Authorization header, so this
- * uses fetch and reads the body itself.
+ * EventSource only speaks GET, so this uses fetch and reads the body itself. The
+ * session cookie goes with it like any same-origin request.
  *
  * @param {object} payload same shape as the /analysis/run body
  * @param {(event: object) => void} onEvent called per progress event
@@ -51,17 +51,14 @@ export function parseSSEBuffer(buffer) {
  * @returns {Promise<object>} the final result, from the terminal `done` event
  */
 export async function streamAnalysis(payload, onEvent, options = {}) {
-    const token = getToken()
     const response = await fetch("/api/analysis/stream", {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         signal: options.signal,
     })
 
+    if (response.status === 401) sessionEnded()
     if (!response.ok) {
         let message = "The analysis could not be started."
         try {

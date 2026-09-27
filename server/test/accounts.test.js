@@ -27,11 +27,12 @@ describe("deleting an account", () => {
     test("needs the password", async () => {
         const dana = await signUp(app.base, "dana")
         assert.equal((await dana.delete("/auth/account", { password: "wrong" })).status, 403)
-        assert.equal((await dana.get("/auth/me")).status, 200)
+        assert.equal((await dana.get("/auth/me")).data.user.username, "dana")
     })
 
     test("removes the user and everything they own", async () => {
         const erin = await signUp(app.base, "erin")
+        const held = erin.cookieHeader()
         const { analysisId } = await seedAnalysis(erin.user)
         await erin.put(`/analysis/${analysisId}/decisions/k`, { decision: true })
         await erin.post("/generate/save", { analysis_id: analysisId, document_type: "cv", content: "# Erin" })
@@ -43,16 +44,15 @@ describe("deleting an account", () => {
         assert.equal(await rowCount("analyses", "user_id = ?", erin.user.id), 0)
         assert.equal(await rowCount("rewrite_decisions", "analysis_id = ?", analysisId), 0)
         assert.equal(await rowCount("generated_documents", "analysis_id = ?", analysisId), 0)
-        // the old token stops working, signed or not
-        assert.equal((await erin.get("/analysis/history")).status, 401)
+        // the old session stops working, signed or not
+        assert.equal((await erin.get("/analysis/history", { headers: { Cookie: held } })).status, 401)
     })
 
     test("a guest can leave without a password", async () => {
         const guest = new Client(app.base)
-        const res = await guest.post("/auth/guest")
-        guest.token = res.data.token
+        await guest.post("/auth/guest")
         assert.equal((await guest.delete("/auth/account")).status, 200)
-        assert.equal((await guest.get("/auth/me")).status, 401)
+        assert.equal((await guest.get("/auth/me")).data.user, null)
     })
 
     test("a mentor leaving keeps what a candidate accepted", async () => {

@@ -71,7 +71,7 @@ function groupRewrites(items, sections) {
 }
 
 function App() {
-    const { user, logout } = useAuth()
+    const { user, loading, logout } = useAuth()
     const location = useLocation()
     const navigate = useNavigate()
     const route = readPath(location.pathname)
@@ -519,6 +519,8 @@ function App() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isCandidate, route.screen, route.id, attemptId, busy])
 
+    // until the server says whose cookie this is, so a signed-in user doesn't see the landing flash
+    if (loading) return <div className="app-loading" aria-busy="true" />
     if (!user) return <Landing />
 
     // mentors land in their workspace
@@ -647,4 +649,10 @@ function App() {
     </>
 }
 
-export default App
+// everything in the workspace belongs to one user, so another sign-in starts it afresh
+function AppForUser() {
+    const { user } = useAuth()
+    return <App key={user ? `user-${user.id}` : "signed-out"} />
+}
+
+export default AppForUser

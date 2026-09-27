@@ -1,27 +1,22 @@
-// real accounts in localStorage, guests in sessionStorage 
-const TOKEN_KEY = "rtr_token"
-const USER_KEY = "rtr_user"
+// The session is an httpOnly cookie the browser sends by itself, so nothing here
+// stores a token. This only lets a request that finds the session gone tell the app.
+let onEnded = () => {}
 
-export function getToken() {
-    return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY)
+export function whenSessionEnds(handler) {
+    onEnded = handler
+    return () => { if (onEnded === handler) onEnded = () => {} }
 }
 
-export function getUserRaw() {
-    return localStorage.getItem(USER_KEY) || sessionStorage.getItem(USER_KEY)
+export function sessionEnded() {
+    onEnded()
 }
 
-export function setSession(token, user, persistent) {
-    const keep = persistent ? localStorage : sessionStorage
-    const drop = persistent ? sessionStorage : localStorage
-    drop.removeItem(TOKEN_KEY)
-    drop.removeItem(USER_KEY)
-    keep.setItem(TOKEN_KEY, token)
-    keep.setItem(USER_KEY, JSON.stringify(user))
-}
-
-export function clearSession() {
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(USER_KEY)
-    sessionStorage.removeItem(TOKEN_KEY)
-    sessionStorage.removeItem(USER_KEY)
+// older versions kept the token in storage, where any script on the page could read it
+export function forgetStoredTokens() {
+    try {
+        for (const store of [localStorage, sessionStorage]) {
+            store.removeItem("rtr_token")
+            store.removeItem("rtr_user")
+        }
+    } catch { /* storage blocked, nothing to forget */ }
 }
