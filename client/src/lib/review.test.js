@@ -3,7 +3,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { claimFlags, criticNote, isActionable, isFlagged } from "./review.js"
+import { claimFlags, criticNote, isActionable, isFlagged, keywordNote } from "./review.js"
 
 const base = { original: "Wrote the docs", rewritten: "Wrote the docs, cutting onboarding by 40%", framework_used: "STAR" }
 
@@ -41,4 +41,20 @@ test("labels, failures and unchanged lines aren't suggestions", () => {
     assert.equal(isActionable({ ...base, framework_used: "none" }), false)
     assert.equal(isActionable({ ...base, framework_used: "error" }), false)
     assert.equal(isActionable({ ...base, rewritten: base.original }), false)
+})
+
+test("a job keyword the original doesn't support is flagged", () => {
+    const [flag] = claimFlags({ ...base, unsupported_keywords: ["Kubernetes", "AWS"] })
+    assert.equal(flag.kind, "keyword")
+    assert.match(flag.detail, /Kubernetes, AWS/)
+})
+
+test("a worked in keyword says what backs it, and isn't a flag", () => {
+    const item = { ...base, keywords_added: [
+        { keyword: "Python", via: "implied", evidence: "Flask" },
+        { keyword: "CI/CD", via: "alias", evidence: "CI" },
+    ] }
+    assert.equal(isFlagged(item), false)
+    assert.equal(keywordNote(item), 'Uses the job\'s keywords Python (you named Flask), CI/CD (you wrote "CI").')
+    assert.equal(keywordNote(base), "")
 })

@@ -210,7 +210,7 @@ function App() {
         setResult(null)
         setAnalysisId(null)
         setDecisions({})
-        setProgress({ stage: "uploading", startedAt: Date.now() })
+        setProgress({ stage: "uploading", startedAt: Date.now(), withJd: Boolean(jd.trim()) })
         try {
             const data = new FormData()
             data.append("file", file)

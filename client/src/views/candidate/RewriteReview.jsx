@@ -1,12 +1,12 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, Check, CheckCircle2, ChevronLeft, ChevronRight, Info, Lightbulb, ShieldCheck, X, XCircle } from "lucide-react"
+import { AlertTriangle, Check, CheckCircle2, ChevronLeft, ChevronRight, Info, Lightbulb, ShieldCheck, Tag, X, XCircle } from "lucide-react"
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
 import { DocumentDiff } from "../../components/DocumentDiff"
 import { MentorSuggestionBlock, editSupersedes } from "../../components/MentorSuggestionBlock"
 import { AnnotationThread } from "../../components/AnnotationThread"
 import { toast } from "../../components/Toast"
-import { claimFlags, criticNote, isActionable, isFlagged } from "../../lib/review"
+import { claimFlags, criticNote, isActionable, isFlagged, keywordNote } from "../../lib/review"
 
 const PdfViewer = lazy(() => import("../../components/PdfViewer"))
 
@@ -122,6 +122,7 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
     const reviewedCount = actionable.filter(({ key }) => decisions[key] !== undefined).length
     const flags = claimFlags(current.item)
     const note = criticNote(current.item)
+    const woven = keywordNote(current.item)
     return <>
         <h2 className="view-title">Review Suggestions</h2>
         {!pending && <GuardSummary result={result} flagged={flaggedCount} />}
@@ -180,6 +181,7 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
                         </p>)}
                     </div>}
                     {note && <p className="critic-note"><Info size={13} /> {note}</p>}
+                    {woven && <p className="critic-note"><Tag size={13} /> {woven}</p>}
                     <div className="reasoning-row"><Lightbulb size={13} /> {current.item.reasoning}</div>
                 </div>
                 <div className="decision-actions">
