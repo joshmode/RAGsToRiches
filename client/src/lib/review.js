@@ -1,3 +1,6 @@
+// severity in words as well as colour
+export const SEVERITY_LABEL = { red: "Weak bullet", yellow: "Could be stronger", green: "Already strong" }
+
 const OVERSTATED = {
     role: "Claims more seniority than your original",
     credit: "Takes personal credit for team work",

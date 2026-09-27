@@ -14,7 +14,7 @@ export function SessionJoin() {
     return <div className="card">
         <span className="section-label">Collaborative Review</span>
         <p className="session-join-hint muted">Ask your mentor for their session code to enable collaborative review of your resume.</p>
-        <input className="input-field" value={code} onChange={e => setCode(e.target.value)} placeholder="Enter mentor session code" />
+        <input className="input-field" aria-label="Mentor session code" value={code} onChange={e => setCode(e.target.value)} placeholder="Enter mentor session code" />
         <button className="btn-secondary btn-block-gap" onClick={join}>Join Session</button>
         {message && <p className="muted">{message}</p>}
     </div>

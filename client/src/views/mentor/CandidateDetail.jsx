@@ -5,6 +5,7 @@ import { Building2, Check, ChevronDown, ChevronUp, PenSquare, RotateCw, X } from
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
 import { getScoreCfg } from "../../lib/score"
+import { SEVERITY_LABEL } from "../../lib/review"
 import { capitalize, formatDateTime, formatShortDate, parseTs } from "../../lib/format"
 import { toast } from "../../components/Toast"
 import { NotificationBadge } from "../../components/NotificationBadge"
@@ -332,7 +333,7 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
                             const bulletEdit = sentByKey[item.id]
                             return <div className="mentor-suggestion" key={item.id}>
                                 <div className="feedback-meta">
-                                    <span className={`severity-dot ${item.severity || "yellow"}`} />
+                                    <span className={`severity-dot ${item.severity || "yellow"}`} role="img" aria-label={SEVERITY_LABEL[item.severity || "yellow"]} title={SEVERITY_LABEL[item.severity || "yellow"]} />
                                     <span className={`status-chip ${decisions[item.id] === true ? "status-accepted" : decisions[item.id] === false ? "status-dismissed" : ""}`}>{decisions[item.id] === true ? "Accepted" : decisions[item.id] === false ? "Dismissed" : "Undecided"}</span>
                                     <button className="pill suggest-edit-pill" onClick={() => startEdit(item.id)}><PenSquare size={12} /> {composerKey === item.id ? "Cancel Edit" : "Edit"}</button>
                                     {bulletEdit?.status === "dismissed" && <button className="pill suggest-edit-pill" onClick={() => startEdit(item.id, bulletEdit)}>
@@ -390,12 +391,12 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
             </div>
         </div>}
 
-        {historyTab === "resume" && !composerKey && !sectionEdit && <button className="mentor-compose-fab" onClick={() => setComposeOpen(true)} title="Compose general feedback"><PenSquare size={20} /></button>}
+        {historyTab === "resume" && !composerKey && !sectionEdit && <button className="mentor-compose-fab" onClick={() => setComposeOpen(true)} title="Compose general feedback" aria-label="Compose general feedback"><PenSquare size={20} /></button>}
         {historyTab === "resume" && composeOpen && createPortal(<div className="modal-overlay" onClick={() => setComposeOpen(false)}>
             <div className="modal-panel" onClick={e => e.stopPropagation()}>
                 <div className="modal-head">
                     <h3 className="modal-title">General Feedback</h3>
-                    <button className="btn-ghost modal-close" onClick={() => setComposeOpen(false)} title="Close"><X size={18} /></button>
+                    <button className="btn-ghost modal-close" onClick={() => setComposeOpen(false)} title="Close" aria-label="Close"><X size={18} /></button>
                 </div>
                 <FeedbackComposer candidateId={candidate.id} analysisId={analysis?.id} prefill={null} onSent={() => { load(); setComposeOpen(false) }} />
             </div>
@@ -405,7 +406,7 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
         {composerKey && editingItem && createPortal(<div className="floating-composer">
             <div className="floating-composer-head">
                 <h4>Edit suggestion · {editingItem.section}</h4>
-                <button className="btn-ghost modal-close" onClick={cancelEdit} title="Close"><X size={16} /></button>
+                <button className="btn-ghost modal-close" onClick={cancelEdit} title="Close" aria-label="Close"><X size={16} /></button>
             </div>
             <FeedbackComposer
                 candidateId={candidate.id} analysisId={analysis.id}
@@ -426,7 +427,7 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
         {sectionEdit && createPortal(<div className="floating-composer">
             <div className="floating-composer-head">
                 <h4>Edit section · {sectionEdit}</h4>
-                <button className="btn-ghost modal-close" onClick={cancelEdit} title="Close"><X size={16} /></button>
+                <button className="btn-ghost modal-close" onClick={cancelEdit} title="Close" aria-label="Close"><X size={16} /></button>
             </div>
             <FeedbackComposer
                 candidateId={candidate.id} analysisId={analysis.id}

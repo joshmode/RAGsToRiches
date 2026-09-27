@@ -152,7 +152,7 @@ export function CoverLetterWorkspace({ candidate, attempts, sent, onSent, unread
                 <span className="section-label">Cover Letter Preview</span>
                 <textarea className="input-field doc-editor mentor-preview-editor" value={content} onChange={e => setContent(e.target.value)} />
                 <div className="mentor-preview-actions cover-letter-submit-row">
-                    <textarea className="input-field cover-letter-comment" value={comment} onChange={e => setComment(e.target.value)} placeholder="Optional comment for the candidate" />
+                    <textarea className="input-field cover-letter-comment" aria-label="Comment for the candidate" value={comment} onChange={e => setComment(e.target.value)} placeholder="Optional comment for the candidate" />
                     <button className="btn-primary" disabled={busy || !content.trim()} onClick={submit}><Check size={15} /> Submit</button>
                 </div>
             </>}

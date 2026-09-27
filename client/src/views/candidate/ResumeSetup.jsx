@@ -75,7 +75,7 @@ export function ResumeSetup({ file, setFile, jobDescription, setJobDescription, 
                                 </div>
                                 <div className="upload-card-actions">
                                     <button type="button" className="btn-ghost btn-small" onClick={open}><RotateCw size={13} /> Replace</button>
-                                    <button type="button" className="upload-card-remove" onClick={() => setFile(null)} title="Remove file"><Trash2 size={15} /></button>
+                                    <button type="button" className="upload-card-remove" onClick={() => setFile(null)} title="Remove file" aria-label="Remove file"><Trash2 size={15} /></button>
                                 </div>
                             </div>
                         ) : "Drop your resume here, or click to upload"}
@@ -85,7 +85,7 @@ export function ResumeSetup({ file, setFile, jobDescription, setJobDescription, 
                 </div>
                 <div>
                     <span className="section-label">Job Description <small>(optional for ATS matching)</small></span>
-                    <textarea className="input-field" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder="Paste a full job description for keyword matching, or leave blank to improve the CV from rewrite decisions only." />
+                    <textarea className="input-field" aria-label="Job description" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder="Paste a full job description for keyword matching, or leave blank to improve the CV from rewrite decisions only." />
                 </div>
             </div>
             <AnalyseSplitButton disabled={!file} analysing={busy} quickBusy={quickBusy} onAnalyse={onAnalyse} onQuickCoverLetter={onQuickCoverLetter} />

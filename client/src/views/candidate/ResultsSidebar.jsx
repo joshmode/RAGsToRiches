@@ -9,7 +9,7 @@ function ResumeMetadataModal({ contact, onClose }) {
         <div className="modal-panel" onClick={e => e.stopPropagation()}>
             <div className="modal-head">
                 <h3 className="modal-title">Resume Metadata</h3>
-                <button className="btn-ghost modal-close" onClick={onClose} title="Close"><X size={18} /></button>
+                <button className="btn-ghost modal-close" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
             </div>
             <div className="contact-grid">
                 {Object.entries(contact).map(([key, value]) => (

@@ -61,10 +61,10 @@ export function JobMatching({ result, provider, localEndpoint, jobMatch, setJobM
         <h3 className="doc-subhead">Check another job</h3>
         <p className="muted">Paste a job ad's link to see how this resume covers it, then re-analyse or write documents for that job.</p>
         <div className="scrape-row">
-            <input className="input-field" value={url} onChange={e => patch({ url: e.target.value })} placeholder="Enter Job Description URL" />
+            <input className="input-field" aria-label="Job ad link" value={url} onChange={e => patch({ url: e.target.value })} placeholder="Enter Job Description URL" />
             <button className="job-match-action" onClick={scrape} disabled={scrapeBusy}>{scrapeBusy ? <><span className="spinner" />Scraping…</> : "Scrape"}</button>
         </div>
-        {scraped && <textarea className="input-field document-editor" value={scraped} onChange={e => patch({ scraped: e.target.value })} />}
+        {scraped && <textarea className="input-field document-editor" aria-label="Scraped job description" value={scraped} onChange={e => patch({ scraped: e.target.value })} />}
         {error && <p className="error-msg">{error}</p>}
 
         <button className="job-match-action job-match-compare" onClick={compare} disabled={compareBusy || (!scraped && !result.job_description)}>
@@ -101,7 +101,7 @@ export function JobMatching({ result, provider, localEndpoint, jobMatch, setJobM
         <h3 className="doc-subhead">LinkedIn Profile Import</h3>
         <p className="muted">The reliable path is LinkedIn's own data export: Settings → Data privacy → Get a copy of your data → ZIP, then upload that ZIP in the main upload box. Public URL preview below is limited by LinkedIn's sign-in wall.</p>
         <div className="scrape-row">
-            <input className="input-field" value={linkedinUrl} onChange={e => patch({ linkedinUrl: e.target.value })} placeholder="LinkedIn Profile URL (public preview only)" />
+            <input className="input-field" aria-label="LinkedIn profile link" value={linkedinUrl} onChange={e => patch({ linkedinUrl: e.target.value })} placeholder="LinkedIn Profile URL (public preview only)" />
             <button className="btn-secondary" onClick={scrapeLinkedIn} disabled={linkedinBusy}>{linkedinBusy ? <><span className="spinner" />Loading…</> : "Preview Profile"}</button>
         </div>
         {liProfile && (profileError ? <p className="warning-strip">{profileError}</p> : <div className="card">{liProfile.name && <p><b>{liProfile.name}</b></p>}{liProfile.headline && <p>{liProfile.headline}</p>}{liProfile.note && <p className="muted">{liProfile.note}</p>}</div>)}

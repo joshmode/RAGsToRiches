@@ -55,13 +55,13 @@ export function FeedbackComposer({ candidateId, analysisId, prefill, onSent }) {
                 <option value="edit">Bullet Edit</option>
                 <option value="section_edit">Section Edit</option>
             </select>
-            <input className="input-field" value={section} onChange={e => setSection(e.target.value)} placeholder="Section (e.g. EXPERIENCE, optional)" />
+            <input className="input-field" aria-label="Section" value={section} onChange={e => setSection(e.target.value)} placeholder="Section (e.g. EXPERIENCE, optional)" />
         </div>
         {isEditLike && <>
-            <textarea className="input-field composer-area" value={originalText} onChange={e => setOriginalText(e.target.value)} placeholder={type === "section_edit" ? "Original text of the whole section" : "Original text this edit applies to"} />
-            <textarea className="input-field composer-area" value={suggestedText} onChange={e => setSuggestedText(e.target.value)} placeholder={type === "section_edit" ? "Your rewritten version of the whole section" : "Your suggested replacement text"} />
+            <textarea className="input-field composer-area" aria-label="Original text" value={originalText} onChange={e => setOriginalText(e.target.value)} placeholder={type === "section_edit" ? "Original text of the whole section" : "Original text this edit applies to"} />
+            <textarea className="input-field composer-area" aria-label="Suggested text" value={suggestedText} onChange={e => setSuggestedText(e.target.value)} placeholder={type === "section_edit" ? "Your rewritten version of the whole section" : "Your suggested replacement text"} />
         </>}
-        <textarea className="input-field composer-area" value={comment} onChange={e => setComment(e.target.value)} placeholder={isEditLike ? "Why this edit helps (optional)" : "Your feedback"} />
+        <textarea className="input-field composer-area" aria-label="Comment" value={comment} onChange={e => setComment(e.target.value)} placeholder={isEditLike ? "Why this edit helps (optional)" : "Your feedback"} />
         <div className="composer-actions">
             <button className="btn-primary" onClick={send}>Send Feedback</button>
             {status && <span className="muted">{status}</span>}

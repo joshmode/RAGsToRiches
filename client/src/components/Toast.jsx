@@ -19,10 +19,10 @@ export function ToastHost() {
         toastListeners.add(add)
         return () => toastListeners.delete(add)
     }, [])
-    if (!toasts.length) return null
-    return <div className="toast-host">{toasts.map(t => (
+    // always there, so a screen reader is already listening when a toast lands
+    return <div className="toast-host" role="status" aria-live="polite">{toasts.map(t => (
         <div className={`toast toast-${t.kind}`} key={t.id}>
-            {t.kind === "error" ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
+            {t.kind === "error" ? <XCircle size={16} aria-hidden="true" /> : <CheckCircle2 size={16} aria-hidden="true" />}
             {t.message}
         </div>
     ))}</div>

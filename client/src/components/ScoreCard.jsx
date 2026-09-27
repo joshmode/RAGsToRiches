@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import { Loader2, Mail, TrendingDown, TrendingUp } from "lucide-react"
 import { getScoreCfg, heatmapQuality, isGraded, scoreBreakdown } from "../lib/score"
 
@@ -36,6 +36,9 @@ export function ScoreCard({ scoreData, history, attemptType, pending = false }) 
     // hooks before the early return below 
     const score = typeof scoreData === "object" ? scoreData?.total || 0 : scoreData || 0
     const displayScore = useCountUp(score)
+    // hover only showed it to a mouse. a tap or a keypress opens it as well
+    const [open, setOpen] = useState(false)
+    const breakdownId = useId()
 
     // no score until the last batch is in, and a 0 would read as a real one
     if (pending) {
@@ -66,15 +69,15 @@ export function ScoreCard({ scoreData, history, attemptType, pending = false }) 
 
     return <div className="card score-card">
         <span className="section-label">Resume Score</span>
-        <div className="score-tooltip-wrap">
-            <div className="score-stack">
+        <div className={`score-tooltip-wrap ${open ? "open" : ""}`}>
+            <button type="button" className="score-stack" aria-expanded={open} aria-controls={breakdownId} onClick={() => setOpen(o => !o)}>
                 <div className="score-ring" style={{ "--pct": score, "--ring-color": cfg.color }}>
                     <div className="score-ring-inner">
                         <div className="score-number" style={{ color: cfg.color }}>{displayScore}</div>
                         <span className="score-label-text" style={{ color: cfg.color }}>{cfg.label}</span>
                     </div>
                 </div>
-                <span className="score-sub">out of 100 · hover for breakdown</span>
+                <span className="score-sub">out of 100 · {open ? "hide" : "show"} breakdown</span>
                 {delta !== null && delta !== 0 && (
                     <span className={`score-delta ${delta > 0 ? "up" : "down"}`}>
                         {delta > 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
@@ -82,8 +85,8 @@ export function ScoreCard({ scoreData, history, attemptType, pending = false }) 
                     </span>
                 )}
                 {standing && <span className="score-benchmark">{standing}</span>}
-            </div>
-            <div className="score-tooltip">
+            </button>
+            <div className="score-tooltip" id={breakdownId} role="region" aria-label="Score breakdown">
                 {lines.map(line => <div key={line}>{line}</div>)}
                 {Object.keys(sectionScores).length > 0 && <>
                     <div className="tooltip-divider" />

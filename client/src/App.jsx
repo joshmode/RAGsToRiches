@@ -615,9 +615,9 @@ function App() {
                             {visibleProviders.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                         </select>
                     </label>
-                    <label className="toggle-wrap"><span className={`toggle-track ${useCritic ? "active" : ""}`} onClick={() => setUseCritic(!useCritic)}><span className="toggle-thumb" /></span>Agentic Self-Correction</label>
+                    <label className="toggle-wrap"><button type="button" role="switch" aria-checked={useCritic} className={`toggle-track ${useCritic ? "active" : ""}`} onClick={() => setUseCritic(!useCritic)}><span className="toggle-thumb" /></button>Agentic Self-Correction</label>
                     {provider === "local" && <div className="local-endpoint-field">
-                        <input className="input-field" value={localEndpoint} onChange={e => setLocalEndpoint(e.target.value)} placeholder="Local API Endpoint" />
+                        <input className="input-field" aria-label="Local model endpoint" value={localEndpoint} onChange={e => setLocalEndpoint(e.target.value)} placeholder="Local API Endpoint" />
                         <small className="muted">Must be reachable by the server, not just your browser. Defaults to your machine's Ollama if you're running this app locally — for a hosted deployment, expose your local model with a tunnel (e.g. ngrok, Tailscale Funnel, Cloudflare Tunnel) and paste that URL here.</small>
                     </div>}
                     <Link className="btn-secondary model-bar-history" to="/history"><History size={13} aria-hidden="true" /> Past attempts<NotificationBadge count={notifSummary.unread_total} /></Link>
@@ -632,7 +632,7 @@ function App() {
                         : <>
                             <p className="muted">Add your own key to use {providerMeta.label.replace(" (Own Key)", "")} — it's encrypted and tied to your account, used only for your own requests, never shared with other users.</p>
                             <div className="two-col">
-                                <input className="input-field" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={`Paste your ${providerMeta.label.replace(" (Own Key)", "")} API key`} />
+                                <input className="input-field" type="password" aria-label={`${providerMeta.label.replace(" (Own Key)", "")} API key`} value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={`Paste your ${providerMeta.label.replace(" (Own Key)", "")} API key`} />
                                 <button className="btn-primary" disabled={keyBusy || !apiKey.trim()} onClick={saveKey}>Save Key</button>
                             </div>
                         </>}

@@ -6,7 +6,7 @@ import { DocumentDiff } from "../../components/DocumentDiff"
 import { MentorSuggestionBlock, editSupersedes } from "../../components/MentorSuggestionBlock"
 import { AnnotationThread } from "../../components/AnnotationThread"
 import { toast } from "../../components/Toast"
-import { claimFlags, criticNote, isActionable, isFlagged, keywordNote } from "../../lib/review"
+import { SEVERITY_LABEL, claimFlags, criticNote, isActionable, isFlagged, keywordNote } from "../../lib/review"
 
 const PdfViewer = lazy(() => import("../../components/PdfViewer"))
 
@@ -141,9 +141,10 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
             : <div className="card muted">Source preview is available for PDF uploads. Parsed content remains available under Extracted Sections.</div>}</div>
             <div>
                 <div className="review-nav">
-                    <button className="btn-secondary btn-arrow" onClick={() => goTo(active - 1)} title="Previous suggestion"><ChevronLeft size={16} /></button>
+                    <button className="btn-secondary btn-arrow" onClick={() => goTo(active - 1)} title="Previous suggestion" aria-label="Previous suggestion"><ChevronLeft size={16} /></button>
                     <select
                         className="input-field suggestion-jump"
+                        aria-label="Go to a suggestion"
                         value={active}
                         onChange={e => goTo(Number(e.target.value))}
                     >
@@ -153,12 +154,12 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
                             </option>
                         ))}
                     </select>
-                    <button className="btn-secondary btn-arrow" onClick={() => goTo(active + 1)} title="Next suggestion"><ChevronRight size={16} /></button>
+                    <button className="btn-secondary btn-arrow" onClick={() => goTo(active + 1)} title="Next suggestion" aria-label="Next suggestion"><ChevronRight size={16} /></button>
                 </div>
                 <span className="section-label">Rewrite Decision</span>
                 <div className={`suggestion-card ${state === true ? "accepted" : state === false ? "dismissed" : ""}`} key={current.key}>
                     <div className="suggestion-head">
-                        <span className="suggestion-title"><span className={`severity-dot ${current.item.severity || "yellow"}`} />{current.section}</span>
+                        <span className="suggestion-title"><span className={`severity-dot ${current.item.severity || "yellow"}`} aria-hidden="true" />{current.section} · <span className="severity-text">{SEVERITY_LABEL[current.item.severity || "yellow"]}</span></span>
                         {state === true && <span className="status-pill status-pill-accepted"><CheckCircle2 size={12} /> Accepted</span>}
                         {state === false && <span className="status-pill status-pill-rejected"><XCircle size={12} /> Rejected</span>}
                         <span className="fw-badge">{current.item.framework_used}</span>

@@ -40,7 +40,7 @@ export function AnnotationThread({ analysisId, suggestionKey, section, viewerRol
             </div>
         ))}
         <div className="annotation-input">
-            <input className="input-field" value={comment} onChange={e => setComment(e.target.value)} placeholder={viewerRole === "mentor" ? "Reply or leave a note for the candidate" : "Ask a question or leave a comment for your mentor"} />
+            <input className="input-field" aria-label="Add a comment" value={comment} onChange={e => setComment(e.target.value)} placeholder={viewerRole === "mentor" ? "Reply or leave a note for the candidate" : "Ask a question or leave a comment for your mentor"} />
             <button className="btn-secondary" onClick={postComment}>Post Comment</button>
         </div>
     </div>

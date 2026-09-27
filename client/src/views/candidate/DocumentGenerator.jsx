@@ -121,7 +121,7 @@ export function DocumentGenerator({ type, result, provider, localEndpoint, decis
         {jdEditorOpen && <div className="card jd-editor-card">
             <span className="section-label">Job Description</span>
             <p className="muted">Editing this reuses your existing resume analysis - only the Cover Letter and Keyword Gap are regenerated.</p>
-            <textarea className="input-field" value={jdDraft} onChange={e => setJdDraft(e.target.value)} placeholder="Paste the job description here" />
+            <textarea className="input-field" aria-label="Job description" value={jdDraft} onChange={e => setJdDraft(e.target.value)} placeholder="Paste the job description here" />
             <div className="composer-actions">
                 <button className="btn-primary" disabled={jdBusy} onClick={saveJobDescription}>{jdBusy ? <><span className="spinner" /> Regenerating…</> : "Save & Regenerate"}</button>
                 <button className="btn-ghost" disabled={jdBusy} onClick={() => setJdEditorOpen(false)}>Cancel</button>

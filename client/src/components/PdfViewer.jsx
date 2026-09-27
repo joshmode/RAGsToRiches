@@ -2,11 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import * as pdfjs from "pdfjs-dist"
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url"
 import { findRange, pageText, rangeRects } from "../lib/pdfText"
+import { SEVERITY_LABEL } from "../lib/review"
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
-
-// severity in words as well as colour
-const SEVERITY_LABEL = { red: "Weak bullet", yellow: "Could be stronger", green: "Already strong" }
 
 // Renders the resume in the browser and draws the suggestion highlights over it.
 // Picking a suggestion used to re-upload the whole PDF for the engine to highlight

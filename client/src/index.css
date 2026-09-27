@@ -248,7 +248,9 @@ html, body { font-family: var(--font-ui), sans-serif; color: var(--c-text); back
     min-width: 200px;
     text-align: left;
 }
-.score-tooltip-wrap:hover .score-tooltip { visibility: visible; opacity: 1; }
+.score-tooltip-wrap:hover .score-tooltip, .score-tooltip-wrap.open .score-tooltip, .score-tooltip-wrap:focus-within .score-tooltip { visibility: visible; opacity: 1; }
+.score-stack { background: none; border: 0; width: 100%; color: inherit; font: inherit; cursor: pointer; }
+.score-stack:focus-visible { outline: 2px solid var(--c-focus); outline-offset: 4px; border-radius: var(--radius); }
 .tooltip-divider { height: 1px; background: #3C4148; margin: 0.5rem 0; }
 .tooltip-heat-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: #A1A5AB; margin-bottom: 0.3rem; }
 .tooltip-heat-row { display: flex; align-items: center; gap: 0.45rem; line-height: 1.5; }
@@ -783,9 +785,10 @@ textarea.doc-editor { min-height: 640px; margin: 0; line-height: 1.6; font-famil
 
 .toggle-wrap { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
 .toggle-track {
-    width: 40px; height: 22px; border-radius: 11px;
-    background: var(--c-border); position: relative; transition: background 0.2s;
+    width: 40px; height: 22px; border-radius: 11px; border: 0; padding: 0; flex-shrink: 0; cursor: pointer;
+    background: var(--c-text-muted); position: relative; transition: background 0.2s;
 }
+.toggle-track:focus-visible { outline: 2px solid var(--c-focus); outline-offset: 2px; }
 .toggle-track.active { background: var(--c-success-fill); }
 .toggle-thumb {
     width: 18px; height: 18px; border-radius: 50%;
@@ -1552,3 +1555,4 @@ details.card > summary {
 .modal-actions .btn-destructive { display: inline-flex; align-items: center; gap: 0.4rem; }
 .delete-account-text { line-height: 1.55; margin-bottom: var(--sp-2); }
 .landing-notice { text-align: center; margin-top: var(--sp-3); font-size: 0.9rem; }
+.severity-text { font-weight: 600; text-transform: none; letter-spacing: 0; }
