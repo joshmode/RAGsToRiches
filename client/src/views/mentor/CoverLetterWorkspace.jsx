@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { Suspense, lazy, useEffect, useMemo, useState } from "react"
 import { Building2, Check, CheckCircle2, RotateCw, XCircle } from "lucide-react"
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
@@ -9,13 +9,15 @@ import { DocumentDiff } from "../../components/DocumentDiff"
 import { AnnotationThread } from "../../components/AnnotationThread"
 import { RevisionTimeline } from "../../components/RevisionTimeline"
 
+const PdfViewer = lazy(() => import("../../components/PdfViewer"))
+
 // its own component, almost nothing is shared with the resume workspace
 export function CoverLetterWorkspace({ candidate, attempts, sent, onSent, unreadById = {} }) {
     const [openId, setOpenId] = useState(null)
     const [content, setContent] = useState("")
     const [baseline, setBaseline] = useState("")
     const [comment, setComment] = useState("")
-    const [pdfUrl, setPdfUrl] = useState("")
+    const [resumePdf, setResumePdf] = useState(null)
     const [diffFrom, setDiffFrom] = useState("")
     const [diffTo, setDiffTo] = useState("")
     const [diff, setDiff] = useState(null)
@@ -61,15 +63,12 @@ export function CoverLetterWorkspace({ candidate, attempts, sent, onSent, unread
 
     // plain and unhighlighted unlike the analysis workspace
     useEffect(() => {
-        if (!open) { setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return "" }); return undefined }
+        if (!open) { setResumePdf(null); return undefined }
         let cancelled = false
-        let createdUrl = ""
-        api.get(`/mentor/candidates/${candidate.id}/resumes/${open.resume_id}/file`, { responseType: "blob" }).then(res => {
-            if (cancelled) return
-            createdUrl = URL.createObjectURL(res.data)
-            setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return createdUrl })
-        }).catch(() => { if (!cancelled) setPdfUrl("") })
-        return () => { cancelled = true; if (createdUrl) URL.revokeObjectURL(createdUrl) }
+        api.get(`/mentor/candidates/${candidate.id}/resumes/${open.resume_id}/file`, { responseType: "blob" })
+            .then(res => { if (!cancelled) setResumePdf(res.data) })
+            .catch(() => { if (!cancelled) setResumePdf(null) })
+        return () => { cancelled = true }
     }, [open?.resume_id, candidate.id])
 
     async function submit() {
@@ -196,7 +195,9 @@ export function CoverLetterWorkspace({ candidate, attempts, sent, onSent, unread
             </details>}
         </div>
         <div className="cl-workspace-right">
-            {open && (pdfUrl ? <div className="pdf-shell"><iframe className="pdf-frame" src={pdfUrl} title="Candidate's original resume" /></div> : <div className="card muted">Source preview is available for PDF uploads only.</div>)}
+            {open && (resumePdf
+                ? <div className="pdf-shell"><Suspense fallback={<p className="muted pdf-viewer-note">Loading the preview…</p>}><PdfViewer file={resumePdf} title="Candidate's original resume" /></Suspense></div>
+                : <div className="card muted">Source preview is available for PDF uploads only.</div>)}
             {!open && <div className="card muted">Open a cover letter attempt to see the original resume.</div>}
         </div>
     </div>

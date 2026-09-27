@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import ReactMarkdown from "react-markdown"
 import { Building2, Check, ChevronDown, ChevronUp, PenSquare, RotateCw, X } from "lucide-react"
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
-import { base64ToBlob, fileToBase64 } from "../../lib/files"
 import { getScoreCfg } from "../../lib/score"
 import { capitalize, formatDateTime, formatShortDate, parseTs } from "../../lib/format"
 import { toast } from "../../components/Toast"
@@ -14,6 +13,8 @@ import { MentorSuggestionBlock, editSupersedes } from "../../components/MentorSu
 import { AnnotationThread } from "../../components/AnnotationThread"
 import { FeedbackComposer } from "./FeedbackComposer"
 import { CoverLetterWorkspace } from "./CoverLetterWorkspace"
+
+const PdfViewer = lazy(() => import("../../components/PdfViewer"))
 
 export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs }) {
     const [history, setHistory] = useState(null)
@@ -33,8 +34,8 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
     const [coverLetters, setCoverLetters] = useState(null)
     // original pdf & rewritten preview toggle, directly editable
     const [previewMode, setPreviewMode] = useState("original")
-    const [pdfUrl, setPdfUrl] = useState("")
-    const [fileB64, setFileB64] = useState("")
+    // the original upload, undefined while it loads and null when there's no pdf
+    const [resumePdf, setResumePdf] = useState(null)
     const [previewMd, setPreviewMd] = useState("")
     const [edited, setEdited] = useState("")
     const [dirty, setDirty] = useState(false)
@@ -104,16 +105,17 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
         }
     }
 
-    // raw bytes once per analysis plus the preview markdown same as the candidate sees
+    // the file once per analysis plus the preview markdown same as the candidate sees
     useEffect(() => {
-        if (!analysis) { setFileB64(""); setPreviewMd(""); setEdited(""); return undefined }
+        if (!analysis) { setResumePdf(null); setPreviewMd(""); setEdited(""); return undefined }
         let cancelled = false
+        setResumePdf(undefined)
         async function loadFile() {
             try {
+                // the route only serves pdfs
                 const fileRes = await api.get(`/mentor/candidates/${candidate.id}/resumes/${analysis.resume_id}/file`, { responseType: "blob" })
-                const b64 = await fileToBase64(fileRes.data)
-                if (!cancelled) setFileB64(b64)
-            } catch { if (!cancelled) setFileB64("") }
+                if (!cancelled) setResumePdf(fileRes.data)
+            } catch { if (!cancelled) setResumePdf(null) }
         }
         async function loadPreview() {
             try {
@@ -126,48 +128,14 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
         return () => { cancelled = true }
     }, [analysis?.id, candidate.id])
 
-    // rehighlights the cached bytes on any edit
+    // drawn in the browser, so opening an edit only scrolls the viewer to it
     const sectionEditActiveKey = sectionEdit ? (analysis?.results?.rewrites?.[sectionEdit]?.[0]?.id || "") : ""
     const highlightActiveKey = composerKey || sectionEditActiveKey
-    useEffect(() => {
-        if (!analysis || !fileB64) {
-            setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev.split("#")[0]); return "" })
-            return undefined
-        }
-        let cancelled = false
-        let createdUrl = ""
-        const items = Object.entries(analysis.results?.rewrites || {}).flatMap(([, list]) =>
-            list.filter(it => it.framework_used !== "none" && it.framework_used !== "error").map(it => ({
-                id: it.id, text: it.highlight_text || it.original || "", severity: it.severity || "yellow",
-                reasoning: it.reasoning || "", rewritten: it.rewritten || "",
-            }))
-        )
-        async function render() {
-            try {
-                const res = await api.post("/analysis/highlight", { file: fileB64, items, active_key: highlightActiveKey }, { responseType: "blob" })
-                if (cancelled) return
-                const activePage = res.headers["x-active-page"]
-                createdUrl = URL.createObjectURL(res.data) + (highlightActiveKey && activePage ? `#page=${activePage}` : "")
-                setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev.split("#")[0]); return createdUrl })
-            } catch {
-                if (cancelled) return
-                // highlighting can fail for reasons unrelated to the file
-                const isPdf = atob(fileB64.slice(0, 8)).startsWith("%PDF")
-                if (isPdf) {
-                    createdUrl = URL.createObjectURL(base64ToBlob(fileB64))
-                    setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev.split("#")[0]); return createdUrl })
-                } else {
-                    setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev.split("#")[0]); return "" })
-                }
-            }
-        }
-        render()
-        return () => {
-            cancelled = true
-            // only if it resolved after cancellation, before setPdfUrl ran for this url
-            if (createdUrl) URL.revokeObjectURL(createdUrl.split("#")[0])
-        }
-    }, [analysis?.id, fileB64, highlightActiveKey])
+    const highlights = useMemo(() => Object.values(analysis?.results?.rewrites || {}).flatMap(list =>
+        list.filter(it => it.framework_used !== "none" && it.framework_used !== "error").map(it => ({
+            id: it.id, text: it.highlight_text || it.original || "", severity: it.severity || "yellow",
+        }))
+    ), [analysis])
 
     async function runDiff() {
         if (!diffFrom || !diffTo) return
@@ -402,8 +370,11 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
                             <button className={previewMode === "original" ? "active" : ""} onClick={() => setPreviewMode("original")}>Original PDF</button>
                             <button className={previewMode === "rewritten" ? "active" : ""} onClick={() => setPreviewMode("rewritten")}>Rewritten Preview</button>
                         </div>
-                        {previewMode === "original" && (
-                            pdfUrl ? <div className="pdf-shell"><iframe className="pdf-frame" src={pdfUrl} title="Candidate resume" /></div> : <div className="card muted">Source preview is available for PDF uploads only.</div>
+                        {previewMode === "original" && (resumePdf === undefined
+                            ? <div className="pdf-shell"><p className="muted pdf-viewer-note">Loading the preview…</p></div>
+                            : resumePdf
+                                ? <div className="pdf-shell"><Suspense fallback={<p className="muted pdf-viewer-note">Loading the preview…</p>}><PdfViewer file={resumePdf} highlights={highlights} activeId={highlightActiveKey} title="Candidate resume, with the suggestions highlighted" /></Suspense></div>
+                                : <div className="card muted">Source preview is available for PDF uploads only.</div>
                         )}
                     </div>
                     {previewMode === "rewritten" && <>
