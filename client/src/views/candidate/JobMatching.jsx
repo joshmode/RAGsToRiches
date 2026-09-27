@@ -58,8 +58,8 @@ export function JobMatching({ result, provider, localEndpoint, jobMatch, setJobM
     const anyShortcutBusy = analysing || busyAction !== "" || compareBusy
 
     return <section className="job-matching-page">
-        <h2 className="view-title">Job Matching</h2>
-        <span className="section-label">Recruitment Integration</span>
+        <h3 className="doc-subhead">Check another job</h3>
+        <p className="muted">Paste a job ad's link to see how this resume covers it, then re-analyse or write documents for that job.</p>
         <div className="scrape-row">
             <input className="input-field" value={url} onChange={e => patch({ url: e.target.value })} placeholder="Enter Job Description URL" />
             <button className="job-match-action" onClick={scrape} disabled={scrapeBusy}>{scrapeBusy ? <><span className="spinner" />Scraping…</> : "Scrape"}</button>
@@ -73,7 +73,7 @@ export function JobMatching({ result, provider, localEndpoint, jobMatch, setJobM
 
         {comparison && <div className="job-match-results">
             <div className="card job-match-score-card">
-                <span className="section-label">Job Fit</span>
+                <span className="section-label">Fit for this job</span>
                 <p className="metric-value">{comparison.match_pct != null ? `${comparison.match_pct}%` : "—"}</p>
                 <p className="muted">Share of the job description's keywords your resume already mentions.</p>
                 <p><b>Strong matches:</b> {(comparison.strong_matches || []).join(", ") || "None"}</p>
@@ -82,7 +82,6 @@ export function JobMatching({ result, provider, localEndpoint, jobMatch, setJobM
                 {company && <p className="job-match-company"><Building2 size={13} /> {company}</p>}
             </div>
 
-            <h3 className="doc-subhead">Matched Keyword Gap</h3>
             <KeywordGap result={comparison} />
 
             <div className="job-match-shortcuts">

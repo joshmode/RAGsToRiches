@@ -1,25 +1,13 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { Link, NavLink } from "react-router-dom"
 import {
-    MessageSquareText, SearchCheck, FileEdit, Mail, Users, BarChart3, Briefcase, FileText, History,
-    ChevronDown, UploadCloud, Sparkles, ClipboardCheck, FileOutput, Download, Check, Loader2, LogIn, LogOut,
+    MessageSquareText, FileEdit, Users, BarChart3, Briefcase, ChevronDown, UploadCloud, Sparkles, ClipboardCheck,
+    FileOutput, Download, Check, Loader2, LogIn, LogOut, History, Trash2, UserRound,
 } from "lucide-react"
 import { NotificationBadge } from "./NotificationBadge"
+import { TABS, attemptPath } from "../lib/routes"
 
-// core workflow only the rest lives behind More instead of competing for space
-const ALWAYS_NAV = [
-    { key: "Suggestions", icon: MessageSquareText },
-    { key: "Keyword Gap", icon: SearchCheck },
-    { key: "Tailored CV", icon: FileEdit },
-    { key: "Cover Letter", icon: Mail },
-    { key: "Mentor Feedback", icon: Users },
-]
-
-const MORE_NAV = [
-    { key: "Insights", icon: BarChart3 },
-    { key: "Job Matching", icon: Briefcase },
-    { key: "Extracted Sections", icon: FileText },
-    { key: "Attempt History", icon: History },
-]
+const TAB_ICONS = { review: MessageSquareText, "job-fit": Briefcase, documents: FileEdit, progress: BarChart3, mentor: Users }
 
 const PIPELINE_STEPS = [
     { key: "upload", label: "Upload Resume", icon: UploadCloud },
@@ -29,52 +17,77 @@ const PIPELINE_STEPS = [
     { key: "export", label: "Export", icon: Download },
 ]
 
-export function Hero() {
-    return <section className="hero-wrap">
-        <div className="hero-eyebrow">Resume intelligence, reimagined</div>
-        <h1 className="hero-title"><span className="title-prefix">RagsToRiches:</span><br /><span className="accent">Smarter resumes, smarter opportunities.</span></h1>
-        <p className="hero-sub">Review rewrite suggestions against the uploaded resume, apply the changes you trust, then generate a CV from those decisions with or without a job description.</p>
-    </section>
+export function Brand() {
+    return <Link to="/" className="brand" aria-label="RAGsToRiches, start page">
+        <img src="/favicon.svg" alt="" width={26} height={26} />
+        <span>RAGsToRiches</span>
+    </Link>
 }
 
-// one sign-in/out control
-export function AuthBar({ user, onLogout }) {
-    return <div className="auth-bar">
-        {user ? <>
-            <span className="auth-bar-status">{user.is_guest ? "Browsing as " : "Signed in as "}<b>{user.display_name}</b></span>
-            <button className="btn-ghost btn-small" onClick={onLogout}>{user.is_guest ? <><LogIn size={13} /> Sign In</> : <><LogOut size={13} /> Sign Out</>}</button>
-        </> : <span className="auth-bar-status">Sign In</span>}
+// the one place to sign out, find past attempts or delete the account
+function AccountMenu({ user, onLogout, onDeleteAccount }) {
+    const [open, setOpen] = useState(false)
+    const wrapRef = useRef(null)
+
+    useEffect(() => {
+        if (!open) return undefined
+        function onDocClick(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false) }
+        function onKey(e) { if (e.key === "Escape") setOpen(false) }
+        document.addEventListener("mousedown", onDocClick)
+        document.addEventListener("keydown", onKey)
+        return () => {
+            document.removeEventListener("mousedown", onDocClick)
+            document.removeEventListener("keydown", onKey)
+        }
+    }, [open])
+
+    return <div className="account-menu" ref={wrapRef}>
+        <button type="button" className="account-toggle" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+            <UserRound size={15} aria-hidden="true" />
+            <span className="account-name">{user.display_name}</span>
+            {user.is_guest && !/^guest\b/i.test(user.display_name || "") && <span className="guest-tag">Guest</span>}
+            <ChevronDown size={14} aria-hidden="true" />
+        </button>
+        {open && <div className="account-dropdown" role="menu">
+            {user.role === "candidate" && <Link role="menuitem" to="/history" onClick={() => setOpen(false)}><History size={14} aria-hidden="true" /> Past attempts</Link>}
+            {!user.is_guest && onDeleteAccount && <button type="button" role="menuitem" onClick={() => { setOpen(false); onDeleteAccount() }}>
+                <Trash2 size={14} aria-hidden="true" /> Delete account
+            </button>}
+            <button type="button" role="menuitem" onClick={() => { setOpen(false); onLogout() }}>
+                {user.is_guest ? <><LogIn size={14} aria-hidden="true" /> Sign in or register</> : <><LogOut size={14} aria-hidden="true" /> Sign out</>}
+            </button>
+        </div>}
     </div>
 }
 
-// fixed, never auto-hides 
-export function TopNav({ view, setView, badges = {} }) {
-    const [moreOpen, setMoreOpen] = useState(false)
+// one slim bar on every screen, with the attempt's tabs in it when one is open
+export function AppHeader({ user, onLogout, onDeleteAccount, children }) {
+    return <header className="app-header">
+        <Brand />
+        {children}
+        {user && <AccountMenu user={user} onLogout={onLogout} onDeleteAccount={onDeleteAccount} />}
+    </header>
+}
 
-    return <nav className="top-nav">
-        <div className="nav-row">
-            {/* .nav-tabs is its own flex:1 centered container, kept to a single non-wrapping
-                row (overflow scrolls instead of wrapping) so the always-visible tabs stay
-                centred and the bar never grows a second row on its own */}
-            <div className="nav-tabs">
-                {ALWAYS_NAV.map(({ key, icon: Icon }) => (
-                    <button className={`nav-pill ${view === key ? "active" : ""}`} key={key} onClick={() => setView(key)}>
-                        <Icon size={14} /><span>{key}</span><NotificationBadge count={badges[key]} />
-                    </button>
-                ))}
-            </div>
-            <button className={`nav-more-toggle ${moreOpen ? "open" : ""}`} onClick={() => setMoreOpen(!moreOpen)} title={moreOpen ? "Collapse" : "More"}>
-                <ChevronDown size={16} />
-            </button>
-        </div>
-        <div className={`nav-more-row ${moreOpen ? "open" : ""}`}>
-            <span className="nav-more-label">More</span>
-            {MORE_NAV.map(({ key, icon: Icon }) => (
-                <button className={`nav-pill ${view === key ? "active" : ""}`} key={key} onClick={() => setView(key)} tabIndex={moreOpen ? 0 : -1}>
-                    <Icon size={14} /><span>{key}</span><NotificationBadge count={badges[key]} />
-                </button>
-            ))}
-        </div>
+export function TopNav({ attemptId, badges = {} }) {
+    return <nav className="top-nav" aria-label="Attempt">
+        {TABS.map(({ key, label }) => {
+            const Icon = TAB_ICONS[key]
+            return <NavLink key={key} to={attemptPath(attemptId, key)} className={({ isActive }) => `nav-pill ${isActive ? "active" : ""}`}>
+                <Icon size={14} aria-hidden="true" /><span>{label}</span><NotificationBadge count={badges[key]} />
+            </NavLink>
+        })}
+    </nav>
+}
+
+// the views inside a tab, e.g. the cv and the cover letter under documents
+export function SubNav({ attemptId, tab, current }) {
+    const { label, subs = [] } = TABS.find(t => t.key === tab) || {}
+    return <nav className="sub-nav" aria-label={`${label} views`}>
+        {subs.map(sub => <Link
+            key={sub.key} to={attemptPath(attemptId, tab, sub.key)}
+            className={sub.key === current ? "active" : ""} aria-current={sub.key === current ? "page" : undefined}
+        >{sub.label}</Link>)}
     </nav>
 }
 

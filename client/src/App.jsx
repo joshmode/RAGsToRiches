@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
-import { BarChart3, FileEdit, History, KeyRound, LogIn, LogOut, MessageSquareText, UploadCloud } from "lucide-react"
+import { Link, useLocation, useNavigate } from "react-router-dom"
+import { ArrowLeft, BarChart3, FileEdit, History, KeyRound, MessageSquareText } from "lucide-react"
 import api from "./api/client"
 import { pollJob } from "./api/jobs"
 import { streamAnalysis } from "./api/stream"
@@ -9,10 +10,11 @@ import { getError } from "./lib/errors"
 import { RESUME_EXT_MIME } from "./lib/files"
 import { kwFreqs } from "./lib/keywords"
 import { isActionable, isFlagged } from "./lib/review"
+import { attemptPath, readPath } from "./lib/routes"
 import { ToastHost, toast } from "./components/Toast"
 import { NotificationBadge } from "./components/NotificationBadge"
 import { AnalysisRequiredGate } from "./components/AnalysisRequiredGate"
-import { AuthBar, Hero, PipelineStepper, TopNav } from "./components/AppChrome"
+import { AppHeader, PipelineStepper, SubNav, TopNav } from "./components/AppChrome"
 import { SessionJoin } from "./components/SessionJoin"
 import { AuthPage } from "./views/AuthPage"
 import { ResumeSetup } from "./views/candidate/ResumeSetup"
@@ -21,12 +23,11 @@ import { ParsePreview } from "./views/candidate/ParsePreview"
 import { ResultsSidebar } from "./views/candidate/ResultsSidebar"
 import { AttemptHistory } from "./views/candidate/AttemptHistory"
 import { RewriteReview } from "./views/candidate/RewriteReview"
-import { KeywordGap } from "./views/candidate/KeywordGap"
 import { ExtractedSections } from "./views/candidate/ExtractedSections"
 import { DocumentGenerator } from "./views/candidate/DocumentGenerator"
 import { Insights } from "./views/candidate/Insights"
 import { FeedbackInbox } from "./views/candidate/FeedbackInbox"
-import { JobMatching } from "./views/candidate/JobMatching"
+import { JobFit } from "./views/candidate/JobFit"
 import { MentorDashboard } from "./views/mentor/MentorDashboard"
 
 // model is fixed per provider server-side now UI only picks the provider
@@ -41,6 +42,10 @@ const PROVIDER_OPTIONS = [
 
 // remembered across reloads so auto-collapse stops fighting them
 const SIDEBAR_AUTO_COLLAPSE_DISABLED_KEY = "rtr_sidebar_auto_collapse_disabled"
+
+function readFlag(key) {
+    try { return localStorage.getItem(key) === "true" } catch { return false }
+}
 
 // streamed so suggestions arrive batch by batch. /run and polling stay for a browser
 // that can't read a response body as it arrives
@@ -66,6 +71,9 @@ function groupRewrites(items, sections) {
 
 function App() {
     const { user, logout } = useAuth()
+    const location = useLocation()
+    const navigate = useNavigate()
+    const route = readPath(location.pathname)
     const [provider, setProvider] = useState("default")
     const [useCritic, setUseCritic] = useState(false)
     const [localEndpoint, setLocalEndpoint] = useState("http://localhost:11434/api/chat")
@@ -82,7 +90,6 @@ function App() {
     const [analysisId, setAnalysisId] = useState(null)
     const [decisions, setDecisions] = useState({})
     const [docs, setDocs] = useState({ cv: "", cover_letter: "" })
-    const [view, setView] = useState("Suggestions")
     const [busy, setBusy] = useState(false)
     // the stages the engine has reported, while an analysis runs
     const [progress, setProgress] = useState(null)
@@ -94,11 +101,8 @@ function App() {
     const [error, setError] = useState("")
     const [history, setHistory] = useState([])
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-    const [autoCollapseDisabled, setAutoCollapseDisabled] = useState(() => localStorage.getItem(SIDEBAR_AUTO_COLLAPSE_DISABLED_KEY) === "true")
+    const [autoCollapseDisabled, setAutoCollapseDisabled] = useState(() => readFlag(SIDEBAR_AUTO_COLLAPSE_DISABLED_KEY))
     const [exported, setExported] = useState(false)
-    const [setupExpanded, setSetupExpanded] = useState(true)
-    // browse history with no attempt yet straight from persisted data
-    const [historyOnly, setHistoryOnly] = useState(false)
     // lifted out of JobMatching
     const [jobMatch, setJobMatch] = useState({ url: "", scraped: "", jobId: null, comparison: null, linkedinUrl: "", liProfile: null, company: "" })
     const [jmBusy, setJmBusy] = useState("")
@@ -106,6 +110,7 @@ function App() {
     // openHistoryAttempt setFile()s the old resume just for the pdf
     const restoringRef = useRef(false)
     const [notifSummary, refreshNotifs] = useNotifSummary(!!user)
+    const attemptId = analysisId || result?.analysis_id || null
     // fires on any attempt change, a no-op on a fresh one
     useEffect(() => {
         if (!analysisId) return
@@ -171,7 +176,7 @@ function App() {
             // expanding is the signal they want control
             if (prev && !next && !autoCollapseDisabled) {
                 setAutoCollapseDisabled(true)
-                localStorage.setItem(SIDEBAR_AUTO_COLLAPSE_DISABLED_KEY, "true")
+                try { localStorage.setItem(SIDEBAR_AUTO_COLLAPSE_DISABLED_KEY, "true") } catch { /* only a preference */ }
             }
             return next
         })
@@ -206,11 +211,11 @@ function App() {
         return entry.promise
     }
 
-    // the upload for the file on screen, retried if it failed
-    function uploaded() {
+    // the upload for a file, retried if it failed
+    function uploaded(target = file) {
         const entry = uploadRef.current
-        if (entry?.file === file && !entry.failed) return entry.promise
-        return startUpload(file)
+        if (entry?.file === target && !entry.failed) return entry.promise
+        return startUpload(target)
     }
 
     useEffect(() => {
@@ -237,10 +242,13 @@ function App() {
         } catch (err) { setKeyMessage(getError(err)) } finally { setKeyBusy(false) }
     }
 
-    // jdOverride reruns against job matching's scraped jd
-    async function analyse(jdOverride, { landOn = "Suggestions" } = {}) {
-        if (!file) return null
+    // jdOverride reruns against job matching's scraped jd. the review opens on the
+    // first streamed batch, at /attempts/new/..., and the url gets the id once it's saved
+    async function analyse(jdOverride, { landOn = { tab: "review" }, fileOverride, providerOverride } = {}) {
+        const target = fileOverride || file
+        if (!target) return null
         const jd = jdOverride !== undefined ? jdOverride : jobDescription
+        const chosen = providerOverride || provider
         setBusy(true)
         setError("")
         setResult(null)
@@ -248,15 +256,15 @@ function App() {
         setDecisions({})
         setProgress({ stage: "uploading", startedAt: Date.now(), withJd: Boolean(jd.trim()) })
         try {
-            const { resumeId, parsed } = await uploaded()
+            const { resumeId, parsed } = await uploaded(target)
             const base = { parsed_resume: parsed, job_description: jd, raw_text: parsed.raw_text }
             const streamed = []
             const completed = await runAnalysis({
                 resume_id: resumeId,
                 job_description: jd,
-                provider,
+                provider: chosen,
                 use_critic: useCritic,
-                local_endpoint: provider === "local" ? localEndpoint : "",
+                local_endpoint: chosen === "local" ? localEndpoint : "",
             }, event => {
                 setProgress(prev => advanceProgress(prev, event))
                 if (event.stage !== "chunk" || !event.rewrites?.length) return
@@ -264,10 +272,7 @@ function App() {
                 streamed.push(...event.rewrites)
                 // the review opens on the first batch and fills in as the rest land
                 setResult({ ...base, contact: parsed.contact, sections: parsed.sections, rewrites: groupRewrites(streamed, parsed.sections), partial: true })
-                if (first) {
-                    if (landOn) setView(landOn)
-                    setSetupExpanded(false)
-                }
+                if (first && landOn) navigate(attemptPath(null, landOn.tab, landOn.sub))
             })
             const newResult = { ...completed, ...base }
             setResult(newResult)
@@ -276,11 +281,13 @@ function App() {
             if (Object.keys(early).length) {
                 api.post(`/analysis/${completed.analysis_id}/decisions`, { decisions: early }).catch(() => {})
             }
-            if (landOn) setView(landOn)
+            // the streamed attempt's url takes its id, on whichever tab is open now
+            const here = readPath(window.location.pathname)
+            if (here.screen === "attempt" && here.id === null) navigate(attemptPath(completed.analysis_id, here.tab, here.sub), { replace: true })
+            else if (landOn) navigate(attemptPath(completed.analysis_id, landOn.tab, landOn.sub))
             setSidebarCollapsed(false)
-            setSetupExpanded(false)
             setExported(false)
-            // only sync an override back 
+            // only sync an override back
             if (jdOverride !== undefined) setJobDescription(jd)
             autoCollapsedRef.current = false
             // restore docs already generated for this analysis so tabs don't wipe them
@@ -318,9 +325,8 @@ function App() {
             setAnalysisId(gen.data.analysis_id)
             setDecisions({})
             setDocs({ cv: "", cover_letter: gen.data.cover_letter_text || "" })
-            setView("Cover Letter")
+            navigate(attemptPath(gen.data.analysis_id, "documents", "cover-letter"))
             setSidebarCollapsed(false)
-            setSetupExpanded(false)
             setExported(false)
             autoCollapsedRef.current = false
             const hist = await api.get("/analysis/history")
@@ -329,8 +335,9 @@ function App() {
         } catch (err) { setError(getError(err)); return null } finally { setQuickBusy(false) }
     }
 
-    // lands a past attempt like a fresh one incl the exact resume it came from
-    async function openHistoryAttempt(id) {
+    // lands a past attempt like a fresh one incl the exact resume it came from.
+    // stay: the url already names it, as after a refresh
+    async function openHistoryAttempt(id, { stay = false } = {}) {
         setError("")
         restoringRef.current = true
         try {
@@ -343,7 +350,7 @@ function App() {
                 resume_id: res.data.resume_id,
                 raw_text: resultsData.raw_text || resultsData.parsed_resume?.raw_text || "",
             }
-            // never persisted for these so need to derive 
+            // never persisted for these so need to derive
             if (!newResult.keyword_frequencies && newResult.strong_matches) {
                 newResult.keyword_frequencies = kwFreqs(newResult.strong_matches, newResult.raw_text)
             }
@@ -372,12 +379,17 @@ function App() {
                 const docsRes = await api.get(`/generate/latest?analysis_id=${id}`)
                 setDocs({ cv: docsRes.data.cv?.content || "", cover_letter: docsRes.data.cover_letter?.content || "" })
             } catch { setDocs({ cv: "", cover_letter: "" }) }
-            setView(res.data.attempt_type === "cover_letter_only" ? "Cover Letter" : "Suggestions")
+            if (!stay) {
+                const coverLetterOnly = res.data.attempt_type === "cover_letter_only"
+                navigate(attemptPath(res.data.id, coverLetterOnly ? "documents" : "review", coverLetterOnly ? "cover-letter" : ""))
+            }
             setSidebarCollapsed(false)
-            setSetupExpanded(false)
             setExported(false)
             autoCollapsedRef.current = false
-        } catch (err) { setError(getError(err)) } finally { restoringRef.current = false }
+        } catch (err) {
+            setError(getError(err))
+            if (stay) navigate("/", { replace: true })
+        } finally { restoringRef.current = false }
     }
 
     // jd-only, so nothing reruns
@@ -405,8 +417,8 @@ function App() {
         try {
             const { ok, error } = await refreshJobDescription(jdText)
             if (ok) {
-                toast("Cover letter generated from Job Matching")
-                setView("Cover Letter")
+                toast("Cover letter generated from Job Fit")
+                navigate(attemptPath(attemptId, "documents", "cover-letter"))
             } else {
                 toast(error, "error")
             }
@@ -439,9 +451,9 @@ function App() {
             })
             setDocs({ cv: res.data.cv_text, cover_letter: "" })
             toast(flagged
-                ? `Tailored CV generated. ${flagged} flagged suggestion${flagged === 1 ? " was" : "s were"} left out, review ${flagged === 1 ? "it" : "them"} under Suggestions`
-                : "New attempt analysed and Tailored CV generated from Job Matching")
-            setView("Tailored CV")
+                ? `Tailored CV generated. ${flagged} flagged suggestion${flagged === 1 ? " was" : "s were"} left out, review ${flagged === 1 ? "it" : "them"} under Review`
+                : "New attempt analysed and Tailored CV generated from Job Fit")
+            navigate(attemptPath(landed.analysisId, "documents", "cv"))
         } catch (err) {
             toast(getError(err), "error")
         } finally {
@@ -449,122 +461,148 @@ function App() {
         }
     }
 
+    const isCandidate = user?.role === "candidate"
+
+    // an attempt's url opens that attempt, after a refresh or from a link. not while
+    // another one is opening, its url only changes once it has loaded
+    const [opening, setOpening] = useState(null)
+    useEffect(() => {
+        if (!isCandidate || route.screen !== "attempt" || busy || restoringRef.current) return
+        if (route.id === null) {
+            // a streamed attempt that isn't in memory any more
+            if (!result) navigate("/", { replace: true })
+            return
+        }
+        if (attemptId === route.id || opening === route.id) return
+        setOpening(route.id)
+        openHistoryAttempt(route.id, { stay: true }).finally(() => setOpening(null))
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isCandidate, route.screen, route.id, attemptId, busy])
+
     if (!user) return <AuthPage />
-    const isMentor = user.role === "mentor"
 
     // mentors land in their workspace
-    if (isMentor) {
-        return <main className="app-container">
+    if (!isCandidate) {
+        return <>
             <ToastHost />
-            <AuthBar user={user} onLogout={logout} />
-            <Hero />
-            <div className="topbar">
-                <span className="muted">Signed in as <b>{user.display_name}</b> · mentor</span>
-                <button className="btn-secondary" onClick={logout}>Sign out</button>
-            </div>
-            <MentorDashboard />
-        </main>
+            <AppHeader user={user} onLogout={logout} />
+            <main className="app-container"><MentorDashboard /></main>
+        </>
     }
 
-    return <main className="app-container">
+    const inAttempt = route.screen === "attempt" && !!result
+    const gate = (icon, message, landOn) => <AnalysisRequiredGate icon={icon} busy={busy} message={message} onAnalyse={() => analyse(undefined, { landOn })} />
+
+    function renderTab() {
+        if (route.tab === "review") {
+            return <>
+                <SubNav attemptId={attemptId} tab="review" current={route.sub} />
+                {route.sub === "sections"
+                    ? <ExtractedSections result={result} />
+                    : isCoverLetterOnlyAttempt
+                        ? <><h2 className="view-title">Review Suggestions</h2>{gate(MessageSquareText, "This attempt only generated a Cover Letter - run a full analysis on the same resume to get rewrite suggestions.", { tab: "review" })}</>
+                        : <RewriteReview result={result} file={file} decisions={decisions} setDecisions={setDecisions} analysisId={pending ? null : analysisId} pending={pending} />}
+            </>
+        }
+        if (pending) return <div className="card muted">This fills in when the analysis finishes. Suggestions are already arriving under Review.</div>
+        if (route.tab === "job-fit") {
+            return <JobFit result={result} decisions={decisions} jobMatching={{
+                provider, localEndpoint, jobMatch, setJobMatch,
+                onReanalyse: jd => analyse(jd),
+                onGenerateCV: jd => generateCVFromJobMatch(jd),
+                onGenerateCoverLetter: jd => generateCoverLetterFromJobMatch(jd),
+                analysing: busy, busyAction: jmBusy,
+            }} />
+        }
+        if (route.tab === "documents") {
+            return <>
+                <SubNav attemptId={attemptId} tab="documents" current={route.sub} />
+                {route.sub === "cover-letter"
+                    ? <DocumentGenerator type="cover-letter" result={result} provider={provider} localEndpoint={localEndpoint} decisions={decisions} analysisId={analysisId} text={docs.cover_letter} setText={t => setDocs({ ...docs, cover_letter: t })} onExport={() => setExported(true)} fullName={fullName} company={jobMatch.company} onChangeJobDescription={refreshJobDescription} />
+                    : isCoverLetterOnlyAttempt
+                        ? <><h2 className="view-title">Generate Tailored CV</h2>{gate(FileEdit, "A Tailored CV is built from rewrite suggestions, which need a full resume analysis first.", { tab: "documents", sub: "cv" })}</>
+                        : <DocumentGenerator type="cv" result={result} provider={provider} localEndpoint={localEndpoint} decisions={decisions} analysisId={analysisId} text={docs.cv} setText={t => setDocs({ ...docs, cv: t })} onExport={() => setExported(true)} fullName={fullName} />}
+            </>
+        }
+        if (route.tab === "progress") {
+            return <>
+                {isCoverLetterOnlyAttempt
+                    ? <><h2 className="view-title">Progress</h2>{gate(BarChart3, "Score trends, job fit and section-strength insights need a full resume analysis.", { tab: "progress" })}</>
+                    : <Insights result={result} history={history} decisions={decisions} />}
+                <AttemptHistory compact history={history} onOpenAttempt={openHistoryAttempt} unreadById={notifSummary.by_analysis_id} />
+            </>
+        }
+        return <>
+            <FeedbackInbox analysisId={attemptId} attemptType={result?.attempt_type} unreadByType={notifSummary.by_attempt_type} onDocumentAccepted={(documentType, text) => setDocs(d => ({ ...d, [documentType]: text }))} />
+            <SessionJoin />
+        </>
+    }
+
+    return <>
         <ToastHost />
-        <AuthBar user={user} onLogout={logout} />
-        <Hero />
-        <PipelineStepper file={file} busy={busy} result={result} docs={docs} exported={exported} />
-        {!historyOnly && (result && !setupExpanded ? (
-            <button className="setup-summary" onClick={() => setSetupExpanded(true)}>
-                <UploadCloud size={15} />
-                <span className="setup-summary-name">{file?.name || "Resume analysed"}</span>
-                <span className="setup-summary-hint muted">Change resume, job description, or provider</span>
-            </button>
-        ) : <>
-            <div className="model-bar">
-                <label>AI Provider
-                    <select className="input-field" value={provider} onChange={e => setProvider(e.target.value)}>
-                        {visibleProviders.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
-                    </select>
-                </label>
-                <label className="toggle-wrap"><span className={`toggle-track ${useCritic ? "active" : ""}`} onClick={() => setUseCritic(!useCritic)}><span className="toggle-thumb" /></span>Agentic Self-Correction</label>
-                {provider === "local" && <div className="local-endpoint-field">
-                    <input className="input-field" value={localEndpoint} onChange={e => setLocalEndpoint(e.target.value)} placeholder="Local API Endpoint" />
-                    <small className="muted">Must be reachable by the server, not just your browser. Defaults to your machine's Ollama if you're running this app locally — for a hosted deployment, expose your local model with a tunnel (e.g. ngrok, Tailscale Funnel, Cloudflare Tunnel) and paste that URL here.</small>
-                </div>}
-                {/* nothing worth showing under "Signed in as" before any analysis exists, a
-                    way back into past attempts is more use here */}
-                {!result && <span className="topbar-inline">
-                    <button className="btn-secondary" onClick={() => setHistoryOnly(true)}><History size={13} /> View Past Attempts<NotificationBadge count={notifSummary.unread_total} /></button>
-                    <button className="btn-secondary" onClick={logout}>{user.is_guest ? <><LogIn size={13} /> Sign In</> : <><LogOut size={13} /> Sign out</>}</button>
-                </span>}
-            </div>
-            {providerMeta?.byok && <div className="card key-card">
-                <span className="section-label"><KeyRound size={13} /> {providerMeta.label.replace(" (Own Key)", "")} API Key</span>
-                {status[provider]
-                    ? <>
-                        <p className="muted">A key is saved for your account and will be used for your requests only.</p>
-                        <button className="btn-destructive" disabled={keyBusy} onClick={removeKey}>Remove key</button>
-                    </>
-                    : <>
-                        <p className="muted">Add your own key to use {providerMeta.label.replace(" (Own Key)", "")} — it's encrypted and tied to your account, used only for your own requests, never shared with other users.</p>
-                        <div className="two-col">
-                            <input className="input-field" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={`Paste your ${providerMeta.label.replace(" (Own Key)", "")} API key`} />
-                            <button className="btn-primary" disabled={keyBusy || !apiKey.trim()} onClick={saveKey}>Save Key</button>
-                        </div>
-                    </>}
-                {keyMessage && <p className="error-msg">{keyMessage}</p>}
-            </div>}
-            <ResumeSetup file={file} setFile={setFile} jobDescription={jobDescription} setJobDescription={setJobDescription} onAnalyse={analyse} onQuickCoverLetter={generateCoverLetterOnly} busy={busy || needsKey} quickBusy={quickBusy || needsKey} preview={<ParsePreview upload={upload} />} />
-            {needsKey && <p className="warning-strip">Add a {providerMeta.label.replace(" (Own Key)", "")} API key above, or switch to Default (Free), before analysing.</p>}
-            {result && <div className="setup-collapse-row"><button className="btn-ghost" onClick={() => setSetupExpanded(false)}>Hide setup</button></div>}
-        </>)}
-        {error && <p className="warning-strip">{error}</p>}
-        {progress && <AnalysisProgress progress={progress} />}
-        {!result && !historyOnly && !busy && <details className="card"><summary>Mentor Feedback &amp; Review Sessions<NotificationBadge count={notifSummary.unread_total} /></summary><div className="prelim-panels"><SessionJoin /><FeedbackInbox unreadByType={notifSummary.by_attempt_type} onDocumentAccepted={(documentType, text) => setDocs(d => ({ ...d, [documentType]: text }))} /></div></details>}
-        {!result && historyOnly && <section className="mentor-workspace">
-            <div className="detail-head">
-                <button className="btn-secondary" onClick={() => setHistoryOnly(false)}>← Back</button>
-                <h3 className="detail-title">Attempt History</h3>
-            </div>
-            <AttemptHistory history={history} onOpenAttempt={id => { setHistoryOnly(false); openHistoryAttempt(id) }} unreadById={notifSummary.by_analysis_id} />
-        </section>}
-        {result && <>
-            <TopNav view={view} setView={setView} badges={{ "Attempt History": notifSummary.unread_total, "Mentor Feedback": notifSummary.unread_total }} />
-            <div className={`workspace ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
-            <ResultsSidebar result={result} user={user} onLogout={logout} history={history} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
-            <div className="workspace-main">
-                <div className="fade-in" key={view}>
-                    {pending && view !== "Suggestions" && view !== "Extracted Sections" && <div className="card muted">This fills in when the analysis finishes. Suggestions are already arriving under Suggestions.</div>}
-                    {!pending && <>
-                    {view === "Suggestions" && (isCoverLetterOnlyAttempt
-                        ? <><h2 className="view-title">Review Suggestions</h2><AnalysisRequiredGate icon={MessageSquareText} busy={busy} message="This attempt only generated a Cover Letter - run a full analysis on the same resume to get rewrite suggestions." onAnalyse={() => analyse(undefined, { landOn: "Suggestions" })} /></>
-                        : <RewriteReview result={result} file={file} decisions={decisions} setDecisions={setDecisions} analysisId={analysisId} />)}
-                    {view === "Keyword Gap" && <KeywordGap result={result} />}
-                    {view === "Extracted Sections" && <ExtractedSections result={result} />}
-                    {view === "Tailored CV" && (isCoverLetterOnlyAttempt
-                        ? <><h2 className="view-title">Generate Tailored CV</h2><AnalysisRequiredGate icon={FileEdit} busy={busy} message="A Tailored CV is built from rewrite suggestions, which need a full resume analysis first." onAnalyse={() => analyse(undefined, { landOn: "Tailored CV" })} /></>
-                        : <DocumentGenerator type="cv" result={result} provider={provider} localEndpoint={localEndpoint} decisions={decisions} analysisId={analysisId} text={docs.cv} setText={t => setDocs({ ...docs, cv: t })} onExport={() => setExported(true)} fullName={fullName} />)}
-                    {view === "Cover Letter" && <DocumentGenerator type="cover-letter" result={result} provider={provider} localEndpoint={localEndpoint} decisions={decisions} analysisId={analysisId} text={docs.cover_letter} setText={t => setDocs({ ...docs, cover_letter: t })} onExport={() => setExported(true)} fullName={fullName} company={jobMatch.company} onChangeJobDescription={refreshJobDescription} />}
-                    {view === "Mentor Feedback" && <FeedbackInbox analysisId={analysisId || result?.analysis_id} attemptType={result?.attempt_type} unreadByType={notifSummary.by_attempt_type} onDocumentAccepted={(documentType, text) => setDocs(d => ({ ...d, [documentType]: text }))} />}
-                    {view === "Insights" && (isCoverLetterOnlyAttempt
-                        ? <><h2 className="view-title">Insights</h2><AnalysisRequiredGate icon={BarChart3} busy={busy} message="Score trends, ATS match, and section-strength insights need a full resume analysis." onAnalyse={() => analyse(undefined, { landOn: "Insights" })} /></>
-                        : <Insights result={result} history={history} decisions={decisions} />)}
-                    {view === "Attempt History" && <AttemptHistory history={history} onOpenAttempt={openHistoryAttempt} unreadById={notifSummary.by_analysis_id} />}
-                    {view === "Job Matching" && <JobMatching
-                        result={result} provider={provider} localEndpoint={localEndpoint}
-                        jobMatch={jobMatch} setJobMatch={setJobMatch}
-                        onReanalyse={jd => analyse(jd)}
-                        onGenerateCV={jd => generateCVFromJobMatch(jd)}
-                        onGenerateCoverLetter={jd => generateCoverLetterFromJobMatch(jd)}
-                        analysing={busy}
-                        busyAction={jmBusy}
-                    />}
-                    </>}
-                    {pending && view === "Suggestions" && <RewriteReview result={result} file={file} decisions={decisions} setDecisions={setDecisions} analysisId={null} pending />}
-                    {pending && view === "Extracted Sections" && <ExtractedSections result={result} />}
+        <AppHeader user={user} onLogout={logout}>
+            {inAttempt && <TopNav attemptId={attemptId} badges={{ mentor: notifSummary.unread_total }} />}
+        </AppHeader>
+        <main className="app-container">
+            {error && <p className="warning-strip" role="alert">{error}</p>}
+            {progress && inAttempt && <AnalysisProgress progress={progress} />}
+
+            {route.screen === "history" && <AttemptHistory history={history} onOpenAttempt={id => openHistoryAttempt(id)} unreadById={notifSummary.by_analysis_id} />}
+
+            {inAttempt && <>
+                <div className="attempt-bar">
+                    <span className="attempt-bar-name">{file?.name || "Resume analysed"}</span>
+                    <Link to="/" className="btn-ghost btn-small">Change resume, job or provider</Link>
                 </div>
-            </div>
-            </div>
-        </>}
-    </main>
+                <div className={`workspace ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
+                    <ResultsSidebar result={result} history={history} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
+                    <div className="workspace-main">
+                        <div className="fade-in" key={`${route.tab}/${route.sub}`}>{renderTab()}</div>
+                    </div>
+                </div>
+            </>}
+
+            {route.screen === "attempt" && !result && <p className="muted opening-attempt" role="status">Opening the attempt…</p>}
+
+            {route.screen !== "attempt" && route.screen !== "history" && <>
+                <PipelineStepper file={file} busy={busy} result={result} docs={docs} exported={exported} />
+                {result && !busy && <p className="setup-back"><Link to={attemptPath(attemptId, "review")}><ArrowLeft size={14} aria-hidden="true" /> Back to the open attempt</Link></p>}
+                <div className="model-bar">
+                    <label>AI Provider
+                        <select className="input-field" value={provider} onChange={e => setProvider(e.target.value)}>
+                            {visibleProviders.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                        </select>
+                    </label>
+                    <label className="toggle-wrap"><span className={`toggle-track ${useCritic ? "active" : ""}`} onClick={() => setUseCritic(!useCritic)}><span className="toggle-thumb" /></span>Agentic Self-Correction</label>
+                    {provider === "local" && <div className="local-endpoint-field">
+                        <input className="input-field" value={localEndpoint} onChange={e => setLocalEndpoint(e.target.value)} placeholder="Local API Endpoint" />
+                        <small className="muted">Must be reachable by the server, not just your browser. Defaults to your machine's Ollama if you're running this app locally — for a hosted deployment, expose your local model with a tunnel (e.g. ngrok, Tailscale Funnel, Cloudflare Tunnel) and paste that URL here.</small>
+                    </div>}
+                    <Link className="btn-secondary model-bar-history" to="/history"><History size={13} aria-hidden="true" /> Past attempts<NotificationBadge count={notifSummary.unread_total} /></Link>
+                </div>
+                {providerMeta?.byok && <div className="card key-card">
+                    <span className="section-label"><KeyRound size={13} /> {providerMeta.label.replace(" (Own Key)", "")} API Key</span>
+                    {status[provider]
+                        ? <>
+                            <p className="muted">A key is saved for your account and will be used for your requests only.</p>
+                            <button className="btn-destructive" disabled={keyBusy} onClick={removeKey}>Remove key</button>
+                        </>
+                        : <>
+                            <p className="muted">Add your own key to use {providerMeta.label.replace(" (Own Key)", "")} — it's encrypted and tied to your account, used only for your own requests, never shared with other users.</p>
+                            <div className="two-col">
+                                <input className="input-field" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={`Paste your ${providerMeta.label.replace(" (Own Key)", "")} API key`} />
+                                <button className="btn-primary" disabled={keyBusy || !apiKey.trim()} onClick={saveKey}>Save Key</button>
+                            </div>
+                        </>}
+                    {keyMessage && <p className="error-msg">{keyMessage}</p>}
+                </div>}
+                <ResumeSetup file={file} setFile={setFile} jobDescription={jobDescription} setJobDescription={setJobDescription} onAnalyse={() => analyse()} onQuickCoverLetter={generateCoverLetterOnly} busy={busy || needsKey} quickBusy={quickBusy || needsKey} preview={<ParsePreview upload={upload} />} />
+                {needsKey && <p className="warning-strip">Add a {providerMeta.label.replace(" (Own Key)", "")} API key above, or switch to Default (Free), before analysing.</p>}
+                {progress && <AnalysisProgress progress={progress} />}
+                {!result && !busy && <details className="card"><summary>Mentor Feedback &amp; Review Sessions<NotificationBadge count={notifSummary.unread_total} /></summary><div className="prelim-panels"><SessionJoin /><FeedbackInbox showTitle={false} unreadByType={notifSummary.by_attempt_type} onDocumentAccepted={(documentType, text) => setDocs(d => ({ ...d, [documentType]: text }))} /></div></details>}
+            </>}
+        </main>
+    </>
 }
 
 export default App

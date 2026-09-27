@@ -5,7 +5,7 @@ import { numberClAtts } from "../../lib/attempts"
 import { formatDateTime } from "../../lib/format"
 
 // either workflow each with its own toggle and numbering 
-export function AttemptHistory({ history, onOpenAttempt, unreadById = {} }) {
+export function AttemptHistory({ history, onOpenAttempt, unreadById = {}, compact = false }) {
     const [tab, setTab] = useState("resume")
     const resumeAtts = useMemo(() => history.filter(h => h.attempt_type !== "cover_letter_only"), [history])
     const clAtts = useMemo(() => history.filter(h => h.attempt_type === "cover_letter_only"), [history])
@@ -15,7 +15,7 @@ export function AttemptHistory({ history, onOpenAttempt, unreadById = {} }) {
     const visible = tab === "resume" ? resumeAtts : clAtts
 
     return <section>
-        <h2 className="view-title">Attempt History</h2>
+        {compact ? <h3 className="doc-subhead">Past attempts</h3> : <h2 className="view-title">Past attempts</h2>}
         <div className="history-type-toggle">
             <button className={tab === "resume" ? "active" : ""} onClick={() => setTab("resume")}>Resume Analysis{resumeUnread && <NotificationBadge count={resumeAtts.filter(h => unreadById[h.id]).length} />}</button>
             <button className={tab === "cover_letter" ? "active" : ""} onClick={() => setTab("cover_letter")}>Cover Letters{coverLetterUnread && <NotificationBadge count={clAtts.filter(h => unreadById[h.id]).length} />}</button>

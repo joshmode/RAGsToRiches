@@ -10,3 +10,17 @@ export function kwFreqs(keywords, text) {
     }
     return freqs
 }
+
+// the job's missing keywords that the rewrites the candidate accepted work in. only
+// ever ones the original bullets support, the engine checks that (weaving.py)
+export function keywordsGained(result, decisions = {}) {
+    const missing = new Set(result.missing_keywords || [])
+    const gained = new Set()
+    for (const items of Object.values(result.rewrites || {})) {
+        for (const item of items) {
+            if (decisions[item.id] !== true) continue
+            for (const { keyword } of item.keywords_added || []) if (missing.has(keyword)) gained.add(keyword)
+        }
+    }
+    return [...gained]
+}

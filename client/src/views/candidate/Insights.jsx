@@ -41,7 +41,8 @@ export function Insights({ result, history, decisions }) {
 
     const jdKeywords = result.jd_keywords || []
     const missingKeywords = result.missing_keywords || []
-    const atsMatch = jdKeywords.length ? Math.round(((jdKeywords.length - missingKeywords.length) / jdKeywords.length) * 100) : null
+    // the same number the job fit tab shows, not a second one
+    const jobFit = result.match_pct ?? (jdKeywords.length ? Math.round(((jdKeywords.length - missingKeywords.length) / jdKeywords.length) * 100) : null)
 
     const gradedSections = Object.entries(result.score?.section_scores || {}).filter(([, d]) => isGraded(d))
     let strongest = null, weakest = null
@@ -69,18 +70,13 @@ export function Insights({ result, history, decisions }) {
     const titleCase = s => s[0] + s.slice(1).toLowerCase()
 
     return <section>
-        <h2 className="view-title">Insights</h2>
+        <h2 className="view-title">Progress</h2>
 
         <div className="metric-grid">
             <div className="stat-card">
-                <span className="stat-label">ATS Match</span>
-                <span className="stat-value">{atsMatch !== null ? `${atsMatch}%` : "—"}</span>
-                <span className="stat-caption">{atsMatch !== null ? `${jdKeywords.length - missingKeywords.length} of ${jdKeywords.length} JD keywords present` : "No job description provided"}</span>
-            </div>
-            <div className="stat-card">
-                <span className="stat-label">Keyword Coverage</span>
-                <span className="stat-value">{atsMatch !== null ? `${atsMatch}%` : "—"}</span>
-                <span className="stat-caption">{atsMatch === null ? "Add a job description to see this" : missingKeywords.length ? `${missingKeywords.length} keywords missing` : "All keywords covered"}</span>
+                <span className="stat-label">Job Fit</span>
+                <span className="stat-value">{jobFit !== null ? `${jobFit}%` : "—"}</span>
+                <span className="stat-caption">{jobFit !== null ? `${jdKeywords.length - missingKeywords.length} of ${jdKeywords.length} job keywords on your resume` : "No job description for this attempt"}</span>
             </div>
             <div className="stat-card">
                 <span className="stat-label">Strongest Section</span>

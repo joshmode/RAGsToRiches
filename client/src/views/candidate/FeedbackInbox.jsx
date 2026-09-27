@@ -8,7 +8,7 @@ import { DocumentDiff } from "../../components/DocumentDiff"
 import { AnnotationThread } from "../../components/AnnotationThread"
 
 // exact match on the open attempt
-export function FeedbackInbox({ analysisId, attemptType, unreadByType = {}, onDocumentAccepted }) {
+export function FeedbackInbox({ analysisId, attemptType, unreadByType = {}, onDocumentAccepted, showTitle = true }) {
     const [items, setItems] = useState(null)
     const [error, setError] = useState("")
     // stops a double-click firing two requests before the re-fetch lands
@@ -39,7 +39,8 @@ export function FeedbackInbox({ analysisId, attemptType, unreadByType = {}, onDo
 
     if (error) return <p className="warning-strip">{error}</p>
     if (!items) return <p className="muted">Loading feedback...</p>
-    if (!items.length) return <div className="card muted">No mentor feedback yet. Join a review session from the sidebar, and your mentor's comments and suggested edits will appear here.</div>
+    const title = showTitle && <h2 className="view-title">Mentor Feedback</h2>
+    if (!items.length) return <section>{title}<div className="card muted">No mentor feedback yet. Join your mentor's review session with the code they give you, and their comments and suggested edits will appear here.</div></section>
 
     const activeAttempt = analysisId || items.reduce((max, f) => (f.attempt_number || 0) > (max?.attempt_number || 0) ? f : max, null)?.analysis_id
     const workflowOf = f => f.attempt_type === "cover_letter_only" ? "cover_letter" : "resume"
@@ -88,7 +89,7 @@ export function FeedbackInbox({ analysisId, attemptType, unreadByType = {}, onDo
     }
 
     return <section>
-        <h2 className="view-title">Mentor Feedback</h2>
+        {title}
         <div className="history-type-toggle">
             <button className={tab === "resume" ? "active" : ""} onClick={() => setTab("resume")}>Resume Analysis<NotificationBadge count={unreadByType.resume_analysis} /></button>
             <button className={tab === "cover_letter" ? "active" : ""} onClick={() => setTab("cover_letter")}>Cover Letters<NotificationBadge count={unreadByType.cover_letter_only} /></button>
