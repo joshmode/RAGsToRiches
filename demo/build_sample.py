@@ -1,18 +1,22 @@
-"""Render demo/sample_resume.txt to client/public/sample-resume.pdf.
+"""Render demo/sample_resume.txt to client/public/sample-resume.pdf, and copy the
+sample job ad next to it, for the landing page's "Try a sample resume".
 
     python demo/build_sample.py
 
-The PDF is committed so the client can serve it. Re-run this after editing the
+Both are committed so the client can serve them. Re-run this after editing either
 text, and update demo/replay.json if a bullet's wording changes.
 """
 
 import os
+import shutil
 
 import fitz
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOURCE = os.path.join(HERE, "sample_resume.txt")
 TARGET = os.path.join(HERE, "..", "client", "public", "sample-resume.pdf")
+JOB_SOURCE = os.path.join(HERE, "sample_job.txt")
+JOB_TARGET = os.path.join(HERE, "..", "client", "public", "sample-job.txt")
 
 
 def build() -> bytes:
@@ -44,4 +48,5 @@ if __name__ == "__main__":
     os.makedirs(os.path.dirname(TARGET), exist_ok=True)
     with open(TARGET, "wb") as handle:
         handle.write(build())
-    print(f"wrote {os.path.relpath(TARGET)}")
+    shutil.copyfile(JOB_SOURCE, JOB_TARGET)
+    print(f"wrote {os.path.relpath(TARGET)} and {os.path.relpath(JOB_TARGET)}")

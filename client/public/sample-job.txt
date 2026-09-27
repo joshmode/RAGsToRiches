@@ -1,0 +1,13 @@
+Backend Engineer, Harbor Labs
+
+Harbor Labs builds reconciliation software for small finance teams. You'll design and run the services behind our ledger.
+
+What you'll do
+- Build and operate services in Python and Go
+- Run our workloads on Kubernetes and AWS
+- Own CI/CD and observability for your services
+- Work with PostgreSQL, Redis and Kafka
+
+What we're looking for
+- 3+ years of backend experience
+- Experience with Terraform is a plus

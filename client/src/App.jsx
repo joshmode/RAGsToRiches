@@ -16,7 +16,7 @@ import { NotificationBadge } from "./components/NotificationBadge"
 import { AnalysisRequiredGate } from "./components/AnalysisRequiredGate"
 import { AppHeader, PipelineStepper, SubNav, TopNav } from "./components/AppChrome"
 import { SessionJoin } from "./components/SessionJoin"
-import { AuthPage } from "./views/AuthPage"
+import { Landing } from "./views/Landing"
 import { ResumeSetup } from "./views/candidate/ResumeSetup"
 import { AnalysisProgress, advanceProgress } from "./views/candidate/AnalysisProgress"
 import { ParsePreview } from "./views/candidate/ParsePreview"
@@ -78,6 +78,7 @@ function App() {
     const [useCritic, setUseCritic] = useState(false)
     const [localEndpoint, setLocalEndpoint] = useState("http://localhost:11434/api/chat")
     const [status, setStatus] = useState({})
+    const [statusLoaded, setStatusLoaded] = useState(false)
     const [apiKey, setApiKey] = useState("")
     const [keyBusy, setKeyBusy] = useState(false)
     const [keyMessage, setKeyMessage] = useState("")
@@ -130,7 +131,7 @@ function App() {
             setStatus(res.data)
             // no key for the free tier: start on the offline demo instead of a dead option
             if (res.data.default === false && res.data.demo) setProvider(p => (p === "default" ? "demo" : p))
-        }).catch(() => setStatus({}))
+        }).catch(() => setStatus({})).finally(() => setStatusLoaded(true))
     }
 
     useEffect(() => {
@@ -461,7 +462,37 @@ function App() {
         }
     }
 
+    // the landing page's "try a sample": the bundled resume and job ad, on the
+    // offline demo when it's switched on so it needs no key at all
+    const sampleRef = useRef(false)
+    async function trySample() {
+        try {
+            const [pdf, jd] = await Promise.all([
+                fetch("/sample-resume.pdf").then(res => res.blob()),
+                fetch("/sample-job.txt").then(res => res.text()),
+            ])
+            const sample = new File([pdf], "sample-resume.pdf", { type: "application/pdf" })
+            const chosen = status.demo ? "demo" : provider
+            setProvider(chosen)
+            setJobDescription(jd)
+            setFile(sample)
+            navigate("/", { replace: true })
+            await analyse(jd, { fileOverride: sample, providerOverride: chosen })
+        } catch (err) {
+            setError(getError(err))
+        } finally {
+            sampleRef.current = false
+        }
+    }
+
     const isCandidate = user?.role === "candidate"
+
+    useEffect(() => {
+        if (!isCandidate || route.screen !== "sample" || !statusLoaded || sampleRef.current) return
+        sampleRef.current = true
+        trySample()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isCandidate, route.screen, statusLoaded])
 
     // an attempt's url opens that attempt, after a refresh or from a link. not while
     // another one is opening, its url only changes once it has loaded
@@ -479,7 +510,7 @@ function App() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isCandidate, route.screen, route.id, attemptId, busy])
 
-    if (!user) return <AuthPage />
+    if (!user) return <Landing />
 
     // mentors land in their workspace
     if (!isCandidate) {
@@ -564,7 +595,7 @@ function App() {
 
             {route.screen === "attempt" && !result && <p className="muted opening-attempt" role="status">Opening the attempt…</p>}
 
-            {route.screen !== "attempt" && route.screen !== "history" && <>
+            {(route.screen === "setup" || route.screen === "sample") && <>
                 <PipelineStepper file={file} busy={busy} result={result} docs={docs} exported={exported} />
                 {result && !busy && <p className="setup-back"><Link to={attemptPath(attemptId, "review")}><ArrowLeft size={14} aria-hidden="true" /> Back to the open attempt</Link></p>}
                 <div className="model-bar">
