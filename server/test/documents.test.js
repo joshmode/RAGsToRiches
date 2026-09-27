@@ -1,4 +1,5 @@
-// Autosaves fold into one revision per sitting instead of one per pause in typing.
+// Autosaves fold into one revision per sitting instead of one per pause in typing,
+// and a document body can't be used to push megabytes through the api.
 
 import assert from "node:assert/strict"
 import { after, before, describe, test } from "node:test"
@@ -48,5 +49,20 @@ describe("autosave", () => {
         getDb().prepare("UPDATE generated_documents SET created_at = datetime('now', '-2 hours'), updated_at = datetime('now', '-2 hours') WHERE analysis_id = ?").run(analysisId)
         await save(analysisId, "afternoon")
         assert.equal((await versions(analysisId)).length, 2)
+    })
+})
+
+describe("request size", () => {
+    test("a body over 2 MB is turned away before it reaches a route", async () => {
+        const { analysisId } = await seedAnalysis(alice.user)
+        const res = await save(analysisId, "x".repeat(3 * 1024 * 1024))
+        assert.equal(res.status, 413)
+        assert.match(res.data.error, /too large/)
+        assert.equal((await versions(analysisId)).length, 0)
+    })
+
+    test("an ordinary document still saves", async () => {
+        const { analysisId } = await seedAnalysis(alice.user)
+        assert.equal((await save(analysisId, "# CV\n" + "- a bullet\n".repeat(2000))).status, 200)
     })
 })

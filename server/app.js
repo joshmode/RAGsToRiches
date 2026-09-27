@@ -45,10 +45,15 @@ app.use(cors({
     },
     credentials: true,
 }))
-app.use(express.json({ limit: "50mb" }))
+// files come in through multer, json bodies are only ever text: a cv, a letter, a
+// job description. 50mb was room for a base64 pdf the client no longer sends
+app.use(express.json({ limit: "2mb" }))
 
-// express.json() throws SyntaxError 
+// express.json() throws SyntaxError
 app.use((err, _req, res, next) => {
+    if (err?.type === "entity.too.large") {
+        return res.status(413).json({ error: "That request is too large. Text fields are capped at 2 MB." })
+    }
     if (err?.type === "entity.parse.failed" || err instanceof SyntaxError) {
         return res.status(400).json({ error: "Malformed JSON in request body." })
     }
