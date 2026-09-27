@@ -103,6 +103,11 @@ app.use("/api", (_req, res) => {
 
 const clientDist = path.resolve(__dirname, "..", "client", "dist")
 app.use(express.static(clientDist))
+// a hashed file an older build asked for, from a tab left open across a deploy. the
+// page's html in its place fails as a module script, a 404 says what happened
+app.use("/assets", (_req, res) => {
+    res.status(404).end()
+})
 app.get("*", (_req, res) => {
     res.sendFile(path.join(clientDist, "index.html"))
 })
