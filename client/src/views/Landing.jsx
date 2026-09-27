@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { BadgeCheck, Gauge, Tags } from "lucide-react"
 import { useAuth } from "../context/AuthContext"
 import { getError } from "../lib/errors"
@@ -28,6 +28,8 @@ const POINTS = [
 export function Landing() {
     const { continueAsGuest } = useAuth()
     const navigate = useNavigate()
+    // e.g. that the account was just deleted
+    const notice = useLocation().state?.notice
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState("")
 
@@ -51,6 +53,7 @@ export function Landing() {
             <a className="btn-ghost btn-small landing-signin" href="#sign-in">Sign in</a>
         </header>
         <main className="app-container">
+            {notice && <p className="success-msg landing-notice" role="status">{notice}</p>}
             <section className="landing-hero">
                 <p className="landing-eyebrow">Resume feedback you can check</p>
                 <h1 className="landing-title">Stronger resume bullets, <span className="accent">with nothing invented.</span></h1>

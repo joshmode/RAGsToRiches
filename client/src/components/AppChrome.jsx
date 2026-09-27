@@ -50,8 +50,8 @@ function AccountMenu({ user, onLogout, onDeleteAccount }) {
         </button>
         {open && <div className="account-dropdown" role="menu">
             {user.role === "candidate" && <Link role="menuitem" to="/history" onClick={() => setOpen(false)}><History size={14} aria-hidden="true" /> Past attempts</Link>}
-            {!user.is_guest && onDeleteAccount && <button type="button" role="menuitem" onClick={() => { setOpen(false); onDeleteAccount() }}>
-                <Trash2 size={14} aria-hidden="true" /> Delete account
+            {onDeleteAccount && <button type="button" role="menuitem" onClick={() => { setOpen(false); onDeleteAccount() }}>
+                <Trash2 size={14} aria-hidden="true" /> {user.is_guest ? "Delete my data now" : "Delete account"}
             </button>}
             <button type="button" role="menuitem" onClick={() => { setOpen(false); onLogout() }}>
                 {user.is_guest ? <><LogIn size={14} aria-hidden="true" /> Sign in or register</> : <><LogOut size={14} aria-hidden="true" /> Sign out</>}

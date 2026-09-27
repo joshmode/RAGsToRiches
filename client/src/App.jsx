@@ -15,6 +15,7 @@ import { ToastHost, toast } from "./components/Toast"
 import { NotificationBadge } from "./components/NotificationBadge"
 import { AnalysisRequiredGate } from "./components/AnalysisRequiredGate"
 import { AppHeader, PipelineStepper, SubNav, TopNav } from "./components/AppChrome"
+import { DeleteAccount } from "./components/DeleteAccount"
 import { SessionJoin } from "./components/SessionJoin"
 import { Landing } from "./views/Landing"
 import { ResumeSetup } from "./views/candidate/ResumeSetup"
@@ -487,6 +488,14 @@ function App() {
 
     const isCandidate = user?.role === "candidate"
 
+    const [deleting, setDeleting] = useState(false)
+    function accountDeleted() {
+        setDeleting(false)
+        navigate("/", { replace: true, state: { notice: user?.is_guest ? "Your guest session and everything in it have been deleted." : "Your account and everything in it have been deleted." } })
+        logout()
+    }
+    const deleteDialog = deleting && <DeleteAccount user={user} onClose={() => setDeleting(false)} onDeleted={accountDeleted} />
+
     useEffect(() => {
         if (!isCandidate || route.screen !== "sample" || !statusLoaded || sampleRef.current) return
         sampleRef.current = true
@@ -516,8 +525,9 @@ function App() {
     if (!isCandidate) {
         return <>
             <ToastHost />
-            <AppHeader user={user} onLogout={logout} />
+            <AppHeader user={user} onLogout={logout} onDeleteAccount={() => setDeleting(true)} />
             <main className="app-container"><MentorDashboard /></main>
+            {deleteDialog}
         </>
     }
 
@@ -571,9 +581,10 @@ function App() {
 
     return <>
         <ToastHost />
-        <AppHeader user={user} onLogout={logout}>
+        <AppHeader user={user} onLogout={logout} onDeleteAccount={() => setDeleting(true)}>
             {inAttempt && <TopNav attemptId={attemptId} badges={{ mentor: notifSummary.unread_total }} />}
         </AppHeader>
+        {deleteDialog}
         <main className="app-container">
             {error && <p className="warning-strip" role="alert">{error}</p>}
             {progress && inAttempt && <AnalysisProgress progress={progress} />}

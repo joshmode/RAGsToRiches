@@ -1465,3 +1465,9 @@ details.card > summary {
 .job-fit-tips svg { flex-shrink: 0; margin-top: 0.2rem; color: var(--c-warning); }
 .keyword-gap { margin-bottom: var(--sp-3); }
 .kw-present small { opacity: 0.7; font-weight: 500; }
+
+/* ---- account deletion ---- */
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: var(--sp-2); }
+.modal-actions .btn-destructive { display: inline-flex; align-items: center; gap: 0.4rem; }
+.delete-account-text { line-height: 1.55; margin-bottom: var(--sp-2); }
+.landing-notice { text-align: center; margin-top: var(--sp-3); font-size: 0.9rem; }
