@@ -62,12 +62,13 @@ router.post("/upload", requireAuth, upload.single("file"), async (req, res) => {
     const db = getDb()
 
     // the same file again: reuse its row and parse, so re-analysing doesn't re-parse
-    // (or re-OCR) it or store another copy
+    // (or re-OCR) it or store another copy. a parse stored before the engine added
+    // its preview is redone once, the preview is what the upload screen shows
     const existing = db.prepare(
         "SELECT * FROM resumes WHERE user_id = ? AND file_hash = ? ORDER BY id DESC LIMIT 1"
     ).get(req.user.id, fileHash)
     const known = storedParse(existing)
-    if (known) {
+    if (known?.preview) {
         return res.json({ resume_id: existing.id, parsed: known, filename: existing.filename, reused: true })
     }
 

@@ -14,13 +14,17 @@ const PARSED = {
     sections: { EXPERIENCE: ["- Built the billing service"] },
     warnings: [],
     ocr_used: false,
+    preview: { score: { total: 61 }, bullets: 1, already_strong: 0, to_rewrite: 1 },
 }
+// what the engine sent back before it previewed the score
+const { preview: _preview, ...OLD_PARSE } = PARSED
 
 let engine, app, alice, bob
+let parseReply = PARSED
 
 before(async () => {
     engine = await startEngine({
-        "/parse": () => [200, PARSED],
+        "/parse": () => [200, parseReply],
         "/analyse": body => [200, {
             score: { total: 61 }, rewrites: {}, sections: body.resume_json.sections, model: "stub-model",
         }],
@@ -61,6 +65,19 @@ describe("uploading", () => {
         assert.equal(second.data.resume_id, first.data.resume_id)
         assert.equal(second.data.reused, true)
         assert.deepEqual(second.data.parsed, PARSED)
+        assert.equal(calls("/parse") - before, 1)
+    })
+
+    test("a parse stored before the preview existed is redone once", async () => {
+        parseReply = OLD_PARSE
+        const old = await alice.post("/analysis/upload", form("%PDF-1.4 from last year"))
+        parseReply = PARSED
+        const before = calls("/parse")
+        const again = await alice.post("/analysis/upload", form("%PDF-1.4 from last year"))
+        const third = await alice.post("/analysis/upload", form("%PDF-1.4 from last year"))
+        assert.equal(again.data.resume_id, old.data.resume_id)
+        assert.deepEqual(again.data.parsed.preview, PARSED.preview)
+        assert.equal(third.data.reused, true)
         assert.equal(calls("/parse") - before, 1)
     })
 

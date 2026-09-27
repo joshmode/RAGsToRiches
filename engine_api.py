@@ -26,7 +26,7 @@ def _load_env():
 _load_env()
 
 from parser import parse_file, ParsedResume
-from analyser import analyse, gen_cv, gen_cover_letter
+from analyser import analyse, gen_cv, gen_cover_letter, preview
 from router import _is_key_placeholder, resolve_model
 from document_export import generate_docx, generate_pdf
 import job_scraper
@@ -112,7 +112,8 @@ def parse_endpoint():
     if len(raw) > 25 * 1024 * 1024:
         return jsonify({"error": "Resume files must be 25 MB or smaller."}), 413
     parsed = parse_file(raw, filename)
-    return jsonify(_resume_to_dict(parsed))
+    # shown with the parse, before anything is analysed
+    return jsonify({**_resume_to_dict(parsed), "preview": preview(parsed)})
 
 
 @app.route("/analyse", methods=["POST"])

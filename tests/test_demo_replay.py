@@ -71,6 +71,14 @@ def test_the_sample_parses_into_its_sections(parsed):
     assert parsed["warnings"] == []
 
 
+def test_the_parse_previews_the_score_the_analysis_will_give(engine, parsed):
+    result, _items = _analyse(engine, parsed)
+    assert parsed["preview"]["score"]["total"] == result["score"]["total"]
+    assert parsed["preview"]["bullets"] == 10
+    assert parsed["preview"]["already_strong"] == result["already_strong"] == 1
+    assert parsed["preview"]["to_rewrite"] == 9
+
+
 def test_sections_keep_the_resume_order(engine, parsed):
     assert list(parsed["sections"]) == ["SUMMARY", "EXPERIENCE", "PROJECTS", "EDUCATION", "SKILLS"]
     result, _items = _analyse(engine, parsed)

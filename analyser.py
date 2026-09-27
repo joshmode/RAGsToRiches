@@ -805,6 +805,22 @@ def calc_score(resume: ParsedResume, rewrites: dict[str, list[dict]] | None = No
     return score
 
 
+def preview(resume: ParsedResume) -> dict:
+    """What an analysis would work on, known the moment the file is parsed.
+
+    The score only reads the resume's own bullets, so it's the number the full
+    analysis will show, before any model has run.
+    """
+    eligible = [unit["text"] for _sec, _i, unit in _plan_units(resume) if unit["eligible"]]
+    strong = 0 if _REWRITE_STRONG_BULLETS else sum(1 for text in eligible if is_strong(bullet_signals(text)))
+    return {
+        "score": calc_score(resume),
+        "bullets": len(eligible),
+        "already_strong": strong,
+        "to_rewrite": len(eligible) - strong,
+    }
+
+
 def analyse(
     resume: ParsedResume,
     job_description: str,
