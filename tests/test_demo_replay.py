@@ -1,8 +1,8 @@
 """End to end through the engine, on the bundled sample, with no API key.
 
 The replay provider answers from recorded responses (demo/replay.json). The
-recordings include the two failures the guards exist for, so this checks the
-whole path catches them: parse the real PDF, analyse, critique, generate.
+recordings include the failures the guards exist for, so this checks the whole
+path catches them: parse the real PDF, analyse, critique, generate.
 """
 
 import base64
@@ -19,7 +19,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAMPLE_PDF = os.path.join(ROOT, "client", "public", "sample-resume.pdf")
 SAMPLE_JOB = os.path.join(ROOT, "demo", "sample_job.txt")
 
+SUMMARY = "Backend engineer with four years of experience building payment and data services."
+CHECKOUT = "Worked on the checkout service with the payments team to improve API performance"
 MIGRATION = "Helped with the migration of 12 legacy services to Kubernetes"
+CI = "Set up CI with GitHub Actions to run tests on every pull request"
 DOCS = "Wrote documentation for the internal deployment tool"
 STRONG = "Reduced checkout latency by 35% by caching product lookups in Redis"
 BUDGET = "Made a budgeting app that tracks spending across bank accounts"
@@ -80,6 +83,16 @@ def test_the_guards_catch_the_recorded_fabrications(engine, parsed):
     assert items[DOCS]["new_claims"] == ["40%"]
     assert result["claim_guard"]["verb_escalation"] == 1
     assert result["claim_guard"]["new_claims"] == 1
+
+
+def test_job_keywords_are_worked_in_only_where_the_bullet_supports_them(engine, parsed):
+    result, items = _analyse(engine, parsed)
+    assert items[CI]["keywords_added"] == [{"keyword": "CI/CD", "via": "alias", "evidence": "CI"}]
+    # the summary speaks for the whole resume, which lists both languages
+    assert [k["keyword"] for k in items[SUMMARY]["keywords_added"]] == ["Python", "Go"]
+    # nothing in the checkout bullet says AWS
+    assert items[CHECKOUT]["unsupported_keywords"] == ["AWS"]
+    assert result["claim_guard"]["unsupported_keywords"] == 1
 
 
 def test_the_strong_bullet_and_the_skills_are_left_alone(engine, parsed):

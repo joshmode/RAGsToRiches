@@ -24,14 +24,15 @@ PINNED = {
     "batch_index_rule": "bbb53c0369bd",
     "framework_guides": "0277e3f6f2c8",
     "jd_profile": "83d923cbaa04",
+    "keyword_rule": "adbd368701e5",
     "numeric_critic": "e39ae81a05f6",
-    "qualitative_system": "a266313b9846",
+    "qualitative_system": "6f1964e226f0",
     "result_schema": "83a5e99a5993",
-    "rewrite_system": "90c8d6c10015",
+    "rewrite_system": "ac3aae6b4697",
     "severity_guide": "3f6d2410f55e",
 }
 
-PINNED_SET_VERSION = "9c1e403177f3"
+PINNED_SET_VERSION = "df707384eaa4"
 
 
 def test_every_pipeline_prompt_is_registered():

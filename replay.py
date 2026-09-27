@@ -4,7 +4,8 @@ The replay provider answers from responses recorded for the bundled sample
 resume and job description (demo/replay.json), so the whole app runs without an
 API key: the rewrites, both critics, the job description read, the CV and the
 cover letter. The recordings include the failures the guards exist for, a verb
-escalation and an invented figure, so the demo shows them being caught.
+escalation, an invented figure and a job keyword the bullet doesn't support, so
+the demo shows them being caught.
 
 Anything without a recording gets a plain, cautious answer: the bullet's own
 wording with a marker where a figure would help. It never supplies a number,

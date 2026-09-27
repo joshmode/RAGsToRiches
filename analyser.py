@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from typing import Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 import hashlib
 import os
 import re
@@ -20,6 +20,7 @@ from router import (
     submit, time_left,
 )
 from scoring import action_verb_strength, bullet_signals, is_strong, score_bullets
+from weaving import check as check_keywords, plan as plan_keywords
 
 load_dotenv()
 
@@ -31,6 +32,10 @@ _REWRITE_STRONG_BULLETS = os.environ.get("REWRITE_STRONG_BULLETS", "false").lowe
 
 # one time budget for a whole analysis, every retry and fallback included
 _ANALYSIS_DEADLINE_SECONDS = float(os.environ.get("ANALYSIS_DEADLINE_SECONDS", "240"))
+
+# how long the rewrites wait on the job description read for its keywords. past
+# this they start without them rather than hold up every suggestion
+_JD_WAIT_SECONDS = 30
 
 # banned ai jargon that make resumes sound generic
 _BANNED_WORDS = (
@@ -154,6 +159,9 @@ _QUALITATIVE_SYS_PROMPT = register("qualitative_system", (
     "  credit    work done by a team or another person is now claimed personally\n"
     "  scope     the rewrite widens the remit, impact or audience\n"
     "  invented  an employer, technology, tool or qualification not in the original\n"
+    "A term the original clearly implies is not invented: the language of a framework "
+    "it names (Flask means Python), the platform of a service it names (EKS means AWS), "
+    "or the job's usual name for something it describes (CI for CI/CD).\n"
     "Rewording, tightening, reordering and stronger phrasing of the same claim are "
     "all fine and must not be flagged. Only flag a genuine change in what is claimed.\n"
     "Respond with ONLY a JSON array with one object per pair, in the same order:\n"
@@ -243,7 +251,9 @@ _REWRITE_SYS_PROMPT = register("rewrite_system", (
     "not a marketing copywriter. "
     "CRITICAL — never invent, assume, or extrapolate any facts: no new metrics, "
     "percentages, team sizes, technologies, employers, or outcomes that are not "
-    "explicitly stated in the original bullet. Use placeholders like [X%] or [N users] "
+    "explicitly stated in the original bullet. The one exception is a job keyword "
+    "listed with a bullet, which that bullet's own content already implies. "
+    "Use placeholders like [X%] or [N users] "
     "when a metric is clearly missing and note it in reasoning. "
     "You MUST apply one of the provided writing frameworks. "
     f"\n\nBANNED WORDS (never use these): {_BANNED_WORDS}\n"
@@ -271,14 +281,30 @@ _BATCH_INDEX_RULE = register("batch_index_rule", (
     "the bullet it rewrites."
 ))
 
+# the keywords come from weaving.plan, which only lists ones the bullet supports
+_KEYWORD_RULE = register("keyword_rule", (
+    "JOB KEYWORDS: the keywords listed with a bullet are ones its own content already "
+    "implies (the language of a framework it names, the platform of a service it names, "
+    "or the job's term for what it describes). Work each one in only where it reads "
+    "naturally, spelled exactly as listed and as part of what the bullet already says. "
+    "Leaving one out is fine. Never add any other skill, tool or technology."
+))
 
-def _build_rewrite_prompts(bullet: str, frameworks: list[Any]) -> tuple[str, str]:
+
+def _keyword_names(offers: list[dict] | tuple = ()) -> str:
+    # brackets would end the "(guides: ...)" group a bullet's line opens with
+    return ", ".join(offer["keyword"].replace("(", "").replace(")", "") for offer in offers)
+
+
+def _build_rewrite_prompts(bullet: str, frameworks: list[Any], keywords: list[dict] | tuple = ()) -> tuple[str, str]:
     fw_ctx = "\n\n".join(f.document for f in frameworks)
+    names = _keyword_names(keywords)
 
     usr_prompt = (
         f"FRAMEWORK GUIDANCE (apply the most relevant one):\n{fw_ctx}\n\n"
         f"BULLET TO REWRITE:\n{bullet}\n\n"
-        f"Respond with this exact JSON structure:\n{_RESULT_SCHEMA}\n"
+        + (f"JOB KEYWORDS FOR THIS BULLET: {names}\n{_KEYWORD_RULE}\n\n" if names else "")
+        + f"Respond with this exact JSON structure:\n{_RESULT_SCHEMA}\n"
         f"{_SEVERITY_GUIDE}"
     )
     return _REWRITE_SYS_PROMPT, usr_prompt
@@ -328,8 +354,9 @@ def rewrite_item(
     use_critic: bool = False,
     model: str = "",
     api_key: str = "",
+    keywords: list[dict] | tuple = (),
 ) -> dict:
-    sys_prompt, usr_prompt = _build_rewrite_prompts(bullet, frameworks)
+    sys_prompt, usr_prompt = _build_rewrite_prompts(bullet, frameworks, keywords)
 
     try:
         raw = llm_call(user_prompt=usr_prompt, system_prompt=sys_prompt,
@@ -425,11 +452,13 @@ def _rewrite_each(
     use_critic: bool,
     model: str,
     api_key: str,
+    keywords: dict[str, list[dict]] | None = None,
 ) -> list[dict]:
     """One call per bullet, side by side. The provider semaphore still caps them."""
     with ThreadPoolExecutor(max_workers=min(4, len(items))) as pool:
         futures = [
-            submit(pool, rewrite_item, text, fws, provider, local_endpoint, use_critic, model=model, api_key=api_key)
+            submit(pool, rewrite_item, text, fws, provider, local_endpoint, use_critic, model=model, api_key=api_key,
+                   keywords=(keywords or {}).get(text, ()))
             for text, fws in items
         ]
         return [future.result() for future in futures]
@@ -442,12 +471,17 @@ def rewrite_chunk(
     use_critic: bool = False,
     model: str = "",
     api_key: str = "",
+    keywords: dict[str, list[dict]] | None = None,
 ) -> list[dict]:
+    """Rewrite a batch of (bullet, frameworks) in one call. ``keywords`` maps a bullet
+    to the job keywords it may work in, from ``weaving.plan``."""
     if not items:
         return []
+    offered = keywords or {}
     if len(items) == 1:
         text, fws = items[0]
-        return [rewrite_item(text, fws, provider, local_endpoint, use_critic, model=model, api_key=api_key)]
+        return [rewrite_item(text, fws, provider, local_endpoint, use_critic, model=model, api_key=api_key,
+                             keywords=offered.get(text, ()))]
 
     # each guide once, numbered, and each bullet names the guides retrieved for it.
     # merging them into one pool lost the per-bullet grounding the retrieval is for
@@ -457,8 +491,12 @@ def rewrite_chunk(
             guides.setdefault(f.document, f"F{len(guides) + 1}")
     fw_ctx = "\n\n".join(f"[{label}] {document}" for document, label in guides.items()) or "none"
 
+    def _listed(text: str) -> str:
+        names = _keyword_names(offered.get(text, ()))
+        return f"; job keywords: {names}" if names else ""
+
     bullets_block = "\n\n".join(
-        f"[{i}] (guides: {', '.join(guides[f.document] for f in fws) or 'none'}) {text}"
+        f"[{i}] (guides: {', '.join(guides[f.document] for f in fws) or 'none'}{_listed(text)}) {text}"
         for i, (text, fws) in enumerate(items)
     )
 
@@ -466,7 +504,8 @@ def rewrite_chunk(
         f"FRAMEWORK GUIDANCE (apply the most relevant of the guides listed with each bullet):\n{fw_ctx}\n\n"
         f"BULLETS TO REWRITE — {len(items)} independent bullets, numbered in order. "
         f"Rewrite EVERY one, keep the same order, do not merge or skip any:\n{bullets_block}\n\n"
-        f"Respond with ONLY a JSON array of exactly {len(items)} objects, one per bullet "
+        + (f"{_KEYWORD_RULE}\n\n" if any(offered.get(text) for text, _fws in items) else "")
+        + f"Respond with ONLY a JSON array of exactly {len(items)} objects, one per bullet "
         f"in the same order as the input, each with this exact structure:\n{_RESULT_SCHEMA}\n"
         f"{_BATCH_INDEX_RULE}\n"
         f"{_SEVERITY_GUIDE}"
@@ -490,11 +529,11 @@ def rewrite_chunk(
             print(f"chunk rewrite ran out of time ({len(items)} bullets): {e}")
             return [_skipped(text, DeadlineExceeded()) for text, _fws in items]
         print(f"chunk rewrite failed ({len(items)} bullets), falling back to per-bullet calls: {e}")
-        return _rewrite_each(items, provider, local_endpoint, use_critic, model, api_key)
+        return _rewrite_each(items, provider, local_endpoint, use_critic, model, api_key, keywords=offered)
 
     if use_critic:
         for i, (text, fws) in enumerate(items):
-            sys_prompt, usr_prompt_single = _build_rewrite_prompts(text, fws)
+            sys_prompt, usr_prompt_single = _build_rewrite_prompts(text, fws, offered.get(text, ()))
             results[i] = _run_critic(
                 text, results[i].get("rewritten", text), results[i],
                 usr_prompt_single, sys_prompt, provider, local_endpoint, model, api_key=api_key,
@@ -816,8 +855,8 @@ def _run_analysis(
     t_start = time.perf_counter()
     emit("started")
 
-    # the one read of the job description runs alongside everything else. the
-    # rewrites don't wait for it any more, they never needed its keywords
+    # the one read of the job description runs alongside planning and retrieval.
+    # the rewrites wait for it, briefly, for the keywords their bullets support
     def _read_jd():
         started = time.perf_counter()
         profile = jd_profile(job_description, provider, local_endpoint, model=model, api_key=api_key)
@@ -906,12 +945,33 @@ def _run_analysis(
         else:
             results_by_sec.setdefault(sec, []).append((i, _label_rw(sec, unit)))
 
+    # a slow read costs the keyword weaving, never the suggestions: past the wait
+    # the rewrites start without it
+    if jd_future is not None and eligible_jobs:
+        left = time_left()
+        wait([jd_future], timeout=_JD_WAIT_SECONDS if left is None else max(0.0, min(_JD_WAIT_SECONDS, left - 10)))
+    join_jd(block=False)
+    jd_keywords: list[str] = list(jd_read.get("keywords") or [])
+    # only keywords a bullet's own content already implies, see weaving.py
+    offers = plan_keywords(
+        [(unit["text"], sec) for sec, _i, unit in eligible_jobs], jd_keywords, resume.raw_text,
+    ) if jd_keywords else {}
+
+    def _mark_keywords(rw: dict, sec: str) -> None:
+        # which job keywords the rewrite worked in, and any the original doesn't support
+        rw.pop("keywords_added", None)
+        rw.pop("unsupported_keywords", None)
+        if jd_keywords:
+            context = resume.raw_text if sec == "SUMMARY" else ""
+            rw.update(check_keywords(rw.get("original", ""), rw.get("rewritten", ""), jd_keywords, context))
+
     # bundle bullets into chunks so one llm call rewrites several at once
     chunks = [eligible_jobs[k:k + _CHUNK_SIZE] for k in range(0, len(eligible_jobs), _CHUNK_SIZE)]
 
     def _do_chunk(chunk_jobs):
         items = [(unit["text"], fw_cache_local[unit["text"]]) for _sec, _i, unit in chunk_jobs]
-        chunk_results = rewrite_chunk(items, provider, local_endpoint, use_critic, model=model, api_key=api_key)
+        chunk_results = rewrite_chunk(items, provider, local_endpoint, use_critic, model=model, api_key=api_key,
+                                      keywords=offers)
         out = []
         for (sec, i, unit), rw in zip(chunk_jobs, chunk_results):
             rw = dict(rw)
@@ -921,6 +981,7 @@ def _run_analysis(
             rw["highlight_text"] = unit["text"]
             # what the score saw in the original, so the UI can say why
             rw["signals"] = bullet_signals(unit["text"])
+            _mark_keywords(rw, sec)
             out.append((sec, i, rw))
         return out
 
@@ -960,6 +1021,14 @@ def _run_analysis(
     t_rewrite = time.perf_counter() - t_rewrite
     join_jd(block=True)
     jd_pool.shutdown(wait=False)
+    if not jd_keywords and jd_read.get("keywords"):
+        # the read landed after the rewrites started. none of them saw the keywords,
+        # but one could still have added a job keyword by itself
+        jd_keywords = list(jd_read["keywords"])
+        for sec, items in results_by_sec.items():
+            for _i, rw in items:
+                if rw.get("framework_used") not in ("none", "error"):
+                    _mark_keywords(rw, sec)
 
     for sec, items in results_by_sec.items():
         items.sort(key=lambda x: x[0])
@@ -969,7 +1038,7 @@ def _run_analysis(
     fit = job_fit(resume.raw_text, jd_read)
     t_total = time.perf_counter() - t_start
     critic_counts: dict[str, int] = {}
-    guard_counts = {"verb_escalation": 0, "overstated": 0, "new_claims": 0, "withheld": 0}
+    guard_counts = {"verb_escalation": 0, "overstated": 0, "new_claims": 0, "unsupported_keywords": 0, "withheld": 0}
     for section in rewrites.values():
         for item in section:
             status = item.get("critic", {}).get("status")
@@ -982,6 +1051,8 @@ def _run_analysis(
             # a figure the critic checked and passed isn't an open question
             if item.get("new_claims") and status != "passed":
                 guard_counts["new_claims"] += 1
+            if item.get("unsupported_keywords"):
+                guard_counts["unsupported_keywords"] += 1
             if status == "failed" and item.get("rewritten") == item.get("original"):
                 guard_counts["withheld"] += 1
 

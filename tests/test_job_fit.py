@@ -120,7 +120,7 @@ def test_analysis_and_comparison_agree_and_share_one_read(model, monkeypatch):
     assert len(model) == 1  # the comparison reused the analysis's read
 
 
-def test_rewrites_never_see_the_missing_keywords(model, monkeypatch):
+def test_rewrites_never_see_keywords_their_bullet_does_not_support(model, monkeypatch):
     prompts = []
 
     def rewrite(user_prompt="", **kwargs):
