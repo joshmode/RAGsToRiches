@@ -1554,3 +1554,12 @@ details.card > summary {
 .pdf-mark-yellow { background: #E8A735; }
 .pdf-mark-green { background: var(--c-success); }
 .pdf-mark.active { opacity: 0.55; outline: 2px solid var(--c-primary-dark); outline-offset: 1px; }
+
+/* what the parser found, under the dropzone */
+.parse-preview { margin-top: 0.75rem; padding: 0.75rem 0.9rem; border: 1px solid var(--c-border); border-radius: var(--radius); background: var(--c-bg); display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.85rem; }
+.parse-preview .spinner { margin-right: 0.4rem; }
+.parse-preview-line { display: flex; align-items: flex-start; gap: 0.45rem; margin: 0; line-height: 1.5; }
+.parse-preview-line svg { flex-shrink: 0; margin-top: 0.2rem; }
+.parse-preview-score b { font-size: 1rem; white-space: nowrap; }
+.parse-preview-warning { color: var(--c-text); }
+.parse-preview-warning svg { color: var(--c-warning); }

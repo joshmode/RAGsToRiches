@@ -38,7 +38,7 @@ function AnalyseSplitButton({ disabled, analysing, quickBusy, onAnalyse, onQuick
     </div>
 }
 
-export function ResumeSetup({ file, setFile, jobDescription, setJobDescription, onAnalyse, onQuickCoverLetter, busy, quickBusy }) {
+export function ResumeSetup({ file, setFile, jobDescription, setJobDescription, onAnalyse, onQuickCoverLetter, busy, quickBusy, preview = null }) {
     // analysis.js accepts .doc but this didn't
     const [rejectionError, setRejectionError] = useState("")
     const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
@@ -71,7 +71,7 @@ export function ResumeSetup({ file, setFile, jobDescription, setJobDescription, 
                                 <span className="upload-card-icon"><FileIcon size={20} /></span>
                                 <div className="upload-card-info">
                                     <span className="upload-card-name" title={file.name}>{file.name}</span>
-                                    <span className="upload-card-meta"><CheckCircle2 size={12} /> {formatFileSize(file.size)} · Uploaded</span>
+                                    <span className="upload-card-meta"><CheckCircle2 size={12} /> {formatFileSize(file.size)}</span>
                                 </div>
                                 <div className="upload-card-actions">
                                     <button type="button" className="btn-ghost btn-small" onClick={open}><RotateCw size={13} /> Replace</button>
@@ -81,6 +81,7 @@ export function ResumeSetup({ file, setFile, jobDescription, setJobDescription, 
                         ) : "Drop your resume here, or click to upload"}
                     </div>
                     {rejectionError && <p className="error-msg">{rejectionError}</p>}
+                    {file && preview}
                 </div>
                 <div>
                     <span className="section-label">Job Description <small>(optional for ATS matching)</small></span>

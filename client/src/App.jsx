@@ -17,6 +17,7 @@ import { SessionJoin } from "./components/SessionJoin"
 import { AuthPage } from "./views/AuthPage"
 import { ResumeSetup } from "./views/candidate/ResumeSetup"
 import { AnalysisProgress, advanceProgress } from "./views/candidate/AnalysisProgress"
+import { ParsePreview } from "./views/candidate/ParsePreview"
 import { ResultsSidebar } from "./views/candidate/ResultsSidebar"
 import { AttemptHistory } from "./views/candidate/AttemptHistory"
 import { RewriteReview } from "./views/candidate/RewriteReview"
@@ -73,6 +74,9 @@ function App() {
     const [keyBusy, setKeyBusy] = useState(false)
     const [keyMessage, setKeyMessage] = useState("")
     const [file, setFile] = useState(null)
+    // the file uploads and parses as soon as it's picked: { file, status, resumeId, parsed }
+    const [upload, setUpload] = useState(null)
+    const uploadRef = useRef(null)
     const [jobDescription, setJobDescription] = useState("")
     const [result, setResult] = useState(null)
     const [analysisId, setAnalysisId] = useState(null)
@@ -182,6 +186,38 @@ function App() {
         setKeyMessage("")
     }, [provider, useCritic, file])
 
+    // one upload per file. the server keys it on the bytes, so the same file again
+    // is a lookup, not a second parse
+    function startUpload(picked) {
+        const data = new FormData()
+        data.append("file", picked)
+        const entry = { file: picked, failed: false }
+        entry.promise = api.post("/analysis/upload", data).then(res => {
+            const done = { file: picked, status: "done", resumeId: res.data.resume_id, parsed: res.data.parsed }
+            if (uploadRef.current === entry) setUpload(done)
+            return done
+        }, err => {
+            entry.failed = true
+            if (uploadRef.current === entry) setUpload({ file: picked, status: "failed", error: getError(err) })
+            throw err
+        })
+        uploadRef.current = entry
+        setUpload({ file: picked, status: "uploading" })
+        return entry.promise
+    }
+
+    // the upload for the file on screen, retried if it failed
+    function uploaded() {
+        const entry = uploadRef.current
+        if (entry?.file === file && !entry.failed) return entry.promise
+        return startUpload(file)
+    }
+
+    useEffect(() => {
+        if (!file) { uploadRef.current = null; setUpload(null); return }
+        if (uploadRef.current?.file !== file) startUpload(file).catch(() => {})
+    }, [file])
+
     async function saveKey() {
         setKeyBusy(true)
         setKeyMessage("")
@@ -212,14 +248,11 @@ function App() {
         setDecisions({})
         setProgress({ stage: "uploading", startedAt: Date.now(), withJd: Boolean(jd.trim()) })
         try {
-            const data = new FormData()
-            data.append("file", file)
-            const upload = await api.post("/analysis/upload", data)
-            const parsed = upload.data.parsed
+            const { resumeId, parsed } = await uploaded()
             const base = { parsed_resume: parsed, job_description: jd, raw_text: parsed.raw_text }
             const streamed = []
             const completed = await runAnalysis({
-                resume_id: upload.data.resume_id,
+                resume_id: resumeId,
                 job_description: jd,
                 provider,
                 use_critic: useCritic,
@@ -270,18 +303,16 @@ function App() {
         setQuickBusy(true)
         setError("")
         try {
-            const data = new FormData()
-            data.append("file", file)
-            const upload = await api.post("/analysis/upload", data)
+            const { resumeId, parsed } = await uploaded()
             const gen = await api.post("/analysis/quick-cover-letter", {
-                resume_id: upload.data.resume_id,
-                resume_json: upload.data.parsed,
+                resume_id: resumeId,
+                resume_json: parsed,
                 job_description: jobDescription,
                 provider,
                 local_endpoint: provider === "local" ? localEndpoint : "",
             })
             const newResult = {
-                ...gen.data.results, parsed_resume: upload.data.parsed, job_description: jobDescription, raw_text: upload.data.parsed.raw_text,
+                ...gen.data.results, parsed_resume: parsed, job_description: jobDescription, raw_text: parsed.raw_text,
             }
             setResult(newResult)
             setAnalysisId(gen.data.analysis_id)
@@ -323,7 +354,12 @@ function App() {
                 const filename = meta?.filename || "resume"
                 const ext = filename.slice(filename.lastIndexOf(".") + 1).toLowerCase()
                 const fileRes = await api.get(`/analysis/resumes/${res.data.resume_id}/file`, { responseType: "blob" })
-                setFile(new File([fileRes.data], filename, { type: RESUME_EXT_MIME[ext] || "application/octet-stream" }))
+                const restored = new File([fileRes.data], filename, { type: RESUME_EXT_MIME[ext] || "application/octet-stream" })
+                // already on the server, so re-analysing it doesn't upload it again
+                const done = { file: restored, status: "done", resumeId: res.data.resume_id, parsed: resultsData.parsed_resume }
+                uploadRef.current = { file: restored, failed: false, promise: Promise.resolve(done) }
+                setUpload(done)
+                setFile(restored)
             } catch { /* the rest of the workspace still works without the source file preview */ }
 
             setResult(newResult)
@@ -476,7 +512,7 @@ function App() {
                     </>}
                 {keyMessage && <p className="error-msg">{keyMessage}</p>}
             </div>}
-            <ResumeSetup file={file} setFile={setFile} jobDescription={jobDescription} setJobDescription={setJobDescription} onAnalyse={analyse} onQuickCoverLetter={generateCoverLetterOnly} busy={busy || needsKey} quickBusy={quickBusy || needsKey} />
+            <ResumeSetup file={file} setFile={setFile} jobDescription={jobDescription} setJobDescription={setJobDescription} onAnalyse={analyse} onQuickCoverLetter={generateCoverLetterOnly} busy={busy || needsKey} quickBusy={quickBusy || needsKey} preview={<ParsePreview upload={upload} />} />
             {needsKey && <p className="warning-strip">Add a {providerMeta.label.replace(" (Own Key)", "")} API key above, or switch to Default (Free), before analysing.</p>}
             {result && <div className="setup-collapse-row"><button className="btn-ghost" onClick={() => setSetupExpanded(false)}>Hide setup</button></div>}
         </>)}
