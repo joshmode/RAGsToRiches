@@ -29,7 +29,6 @@ from parser import parse_file, ParsedResume
 from analyser import analyse, gen_cv, gen_cover_letter
 from router import _is_key_placeholder, resolve_model
 from document_export import generate_docx, generate_pdf
-from pdf_highlight import highlight_pdf
 import job_scraper
 import job_fit
 
@@ -271,19 +270,6 @@ def export_pdf_endpoint():
         )
     except Exception as e:
         return jsonify({"error": f"PDF export failed: {e}"}), 400
-
-
-@app.route("/highlight-pdf", methods=["POST"])
-def highlight_pdf_endpoint():
-    data = _get_json_body()
-    try:
-        raw = base64.b64decode(data.get("file", ""), validate=True)
-        rendered, active_page = highlight_pdf(raw, data.get("items", []), data.get("active_key", ""))
-        response = send_file(io.BytesIO(rendered), mimetype="application/pdf")
-        response.headers["X-Active-Page"] = str(active_page or "")
-        return response
-    except Exception as e:
-        return jsonify({"error": f"PDF highlighting failed: {e}"}), 400
 
 
 @app.route("/scrape-jd", methods=["POST"])

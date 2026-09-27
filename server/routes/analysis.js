@@ -506,24 +506,6 @@ router.get("/jobs/:jobId", requireAuth, pollLimiter, (req, res) => {
     res.json({ id: job.id, status: job.status, error: job.error || "" })
 })
 
-router.post("/highlight", requireAuth, pollLimiter, async (req, res) => {
-    const engineUrl = req.app.locals.engineUrl
-    try {
-        const resp = await fetch(`${engineUrl}/highlight-pdf`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(req.body),
-        })
-        if (!resp.ok) return res.status(resp.status).json(await resp.json())
-        const data = Buffer.from(await resp.arrayBuffer())
-        res.setHeader("Content-Type", "application/pdf")
-        res.setHeader("X-Active-Page", resp.headers.get("x-active-page") || "")
-        res.send(data)
-    } catch (err) {
-        res.status(500).json({ error: "PDF highlighting failed. Please try again." })
-    }
-})
-
 router.get("/history", requireAuth, (req, res) => {
     const db = getDb()
     // summary columns only, the results blobs stay on disk
