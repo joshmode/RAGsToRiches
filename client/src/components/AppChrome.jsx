@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react"
 import { Link, NavLink } from "react-router-dom"
 import {
     MessageSquareText, FileEdit, Users, BarChart3, Briefcase, ChevronDown, UploadCloud, Sparkles, ClipboardCheck,
-    FileOutput, Download, Check, Loader2, LogIn, LogOut, History, Trash2, UserRound,
+    FileOutput, Download, Check, Loader2, LogIn, LogOut, History, SunMoon, Trash2, UserRound,
 } from "lucide-react"
 import { NotificationBadge } from "./NotificationBadge"
 import { TABS, attemptPath } from "../lib/routes"
+import { THEMES, applyTheme, nextTheme, storedTheme } from "../lib/theme"
 
 const TAB_ICONS = { review: MessageSquareText, "job-fit": Briefcase, documents: FileEdit, progress: BarChart3, mentor: Users }
 
@@ -27,6 +28,7 @@ export function Brand() {
 // the one place to sign out, find past attempts or delete the account
 function AccountMenu({ user, onLogout, onDeleteAccount }) {
     const [open, setOpen] = useState(false)
+    const [theme, setTheme] = useState(storedTheme)
     const wrapRef = useRef(null)
 
     useEffect(() => {
@@ -50,6 +52,10 @@ function AccountMenu({ user, onLogout, onDeleteAccount }) {
         </button>
         {open && <div className="account-dropdown" role="menu">
             {user.role === "candidate" && <Link role="menuitem" to="/history" onClick={() => setOpen(false)}><History size={14} aria-hidden="true" /> Past attempts</Link>}
+            {/* stays open so it can be clicked round to the one wanted */}
+            <button type="button" role="menuitem" onClick={() => { const next = nextTheme(theme); applyTheme(next); setTheme(next) }}>
+                <SunMoon size={14} aria-hidden="true" /> Theme: {THEMES.find(t => t.key === theme).label}
+            </button>
             {onDeleteAccount && <button type="button" role="menuitem" onClick={() => { setOpen(false); onDeleteAccount() }}>
                 <Trash2 size={14} aria-hidden="true" /> {user.is_guest ? "Delete my data now" : "Delete account"}
             </button>}
