@@ -365,6 +365,9 @@ router.post("/feedback", requireAuth, requireRole("mentor"), (req, res) => {
     if (type === "comment" && !String(comment || "").trim()) {
         return res.status(400).json({ error: "Comment cannot be empty." })
     }
+    if ((type === "edit" || type === "section_edit") && !analysis_id) {
+        return res.status(400).json({ error: "Edit suggestions need an analysis to apply to." })
+    }
     // canAccess only proves they can reach some analysis not this candidate
     const analysisId = analysis_id ? parseInt(analysis_id) : null
     let analysisRow = null

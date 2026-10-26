@@ -1,3 +1,4 @@
+import "./env.js"
 import crypto from "crypto"
 import { getDb } from "./db.js"
 

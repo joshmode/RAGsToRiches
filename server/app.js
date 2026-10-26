@@ -1,7 +1,7 @@
+import "./env.js"
 import express from "express"
 import cors from "cors"
 import helmet from "helmet"
-import dotenv from "dotenv"
 import path from "path"
 import { fileURLToPath } from "url"
 
@@ -19,8 +19,6 @@ import { generalLimiter, authLimiter } from "./middleware/rateLimit.js"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-dotenv.config({ path: path.resolve(__dirname, "..", ".env") })
-
 // the app without a listener, so the tests can drive it. index.js starts it
 const app = express()
 const ENGINE_URL = process.env.ENGINE_URL || "http://localhost:5001"
@@ -36,7 +34,9 @@ app.use(helmet({
         directives: {
             defaultSrc: ["'self'"],
             scriptSrc: ["'self'"],
-            styleSrc: ["'self'", "https://fonts.googleapis.com"],
+            // React uses style attributes for live values (PDF highlight geometry,
+            // progress width, score colours). Without unsafe-inline they are blocked.
+            styleSrc: ["'self'", "https://fonts.googleapis.com", "'unsafe-inline'"],
             fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
             imgSrc: ["'self'", "data:", "blob:"],
             workerSrc: ["'self'", "blob:"],
@@ -101,7 +101,11 @@ app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found." })
 })
 
-const clientDist = path.resolve(__dirname, "..", "client", "dist")
+// CLIENT_DIST lets the static tests point at a temporary build instead of
+// requiring a full Vite build before the API suite can run.
+const clientDist = process.env.CLIENT_DIST
+    ? path.resolve(process.env.CLIENT_DIST)
+    : path.resolve(__dirname, "..", "client", "dist")
 app.use(express.static(clientDist))
 // a hashed file an older build asked for, from a tab left open across a deploy. the
 // page's html in its place fails as a module script, a 404 says what happened

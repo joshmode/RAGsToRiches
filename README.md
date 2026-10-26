@@ -145,9 +145,9 @@ npm run lint
 npm test
 ```
 
-`python -m pytest` runs the engine's 359 tests. `eval_claims.py` measures the claim
+`python -m pytest` runs the engine's 381 tests. `eval_claims.py` measures the claim
 checks against labelled sets (see [`eval/`](eval/README.md)): fabrication F1 is 1.00 on
-the development set and 0.75 on the held-out set. The API has 50 tests and the client
+the development set and 0.75 on the held-out set. The API has 52 tests and the client
 33. CI runs all of them on every push and pull request, and fails if the claim checks
 drop below 0.95 precision or recall on the development set.
 

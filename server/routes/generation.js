@@ -1,3 +1,4 @@
+import "../env.js"
 import { Router } from "express"
 import fetch from "node-fetch"
 import { requireAuth } from "../middleware/auth.js"
@@ -8,6 +9,7 @@ import {
     getCompany, sugKey, TYPES,
 } from "../documents.js"
 import { fetchEngine } from "../engineClient.js"
+import { engineError, engineJson } from "../engineResponse.js"
 import { llmLimiter } from "../middleware/rateLimit.js"
 import { resolveProvider, ProviderError, PROVIDER_CHOICES } from "../userKeys.js"
 
@@ -95,8 +97,10 @@ router.post("/cv", requireAuth, llmLimiter, async (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
         })
-        if (!resp.ok) return res.status(resp.status).json(await resp.json())
-        const data = await resp.json()
+        if (!resp.ok) {
+            return res.status(resp.status).json({ error: engineError(await engineJson(resp), "CV generation failed.") })
+        }
+        const data = await engineJson(resp)
         saveRev({
             analysisId, ownerId: req.user.id, type: "cv",
             content: data.cv_text || "", source: "ai", authorId: req.user.id,
@@ -127,8 +131,10 @@ router.post("/cover-letter", requireAuth, llmLimiter, async (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
         })
-        if (!resp.ok) return res.status(resp.status).json(await resp.json())
-        const data = await resp.json()
+        if (!resp.ok) {
+            return res.status(resp.status).json({ error: engineError(await engineJson(resp), "Cover letter generation failed.") })
+        }
+        const data = await engineJson(resp)
         saveRev({
             analysisId, ownerId: req.user.id, type: "cover_letter",
             content: data.cover_letter_text || "", source: "ai", authorId: req.user.id,
@@ -148,7 +154,9 @@ async function exportDoc(req, res, path, type) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text: req.body.text || "" }),
         })
-        if (!resp.ok) return res.status(resp.status).json(await resp.json())
+        if (!resp.ok) {
+            return res.status(resp.status).json({ error: engineError(await engineJson(resp), "Document export failed.") })
+        }
         const data = Buffer.from(await resp.arrayBuffer())
         res.setHeader("Content-Type", type)
         const filename = String(req.body.filename || "ragstoriches_document").replace(/[^a-zA-Z0-9._-]/g, "_")

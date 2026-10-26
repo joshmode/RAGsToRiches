@@ -74,6 +74,7 @@ describe("the content security policy", () => {
         assert.ok(csp)
         assert.match(csp, /default-src 'self'/)
         assert.match(csp, /script-src 'self'(;|$)/)
+        assert.match(csp, /style-src [^;]*'unsafe-inline'/)
         assert.match(csp, /frame-ancestors 'none'/)
         assert.match(csp, /worker-src 'self' blob:/)
     })

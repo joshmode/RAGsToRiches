@@ -16,13 +16,16 @@ export function ParsePreview({ upload }) {
 
     const { sections = {}, warnings = [], ocr_used: ocrUsed, preview } = upload.parsed || {}
     const names = Object.keys(sections).filter(name => name !== "HEADER" && sections[name].length)
+    const unreadable = !names.length && warnings.length > 0
     return <div className="parse-preview" role="status">
         <p className="parse-preview-line">
             <FileSearch size={14} />
             <span>
                 {names.length
                     ? <>Found {names.length} section{names.length === 1 ? "" : "s"}: {names.map(name => `${sectionName(name)} (${sections[name].length})`).join(", ")}.</>
-                    : "No sections found. Check the file is a resume with headings before analysing."}
+                    : unreadable
+                        ? "This file couldn't be read as a resume. See the warnings below before analysing."
+                        : "No sections found. Check the file is a resume with headings before analysing."}
             </span>
         </p>
         {preview && <p className="parse-preview-line parse-preview-score">

@@ -51,8 +51,10 @@ export function CoverLetterWorkspace({ candidate, attempts, sent, onSent, unread
             const res = await api.get(`/mentor/candidates/${candidate.id}/analyses/${id}/cover-letter`)
             const savedContent = res.data.content || ""
             // resume from their own draft if there is one
+            // A dismissed rewrite is not a draft to resume. The server's effective
+            // document is the current truth; only open/accepted mentor text preloads.
             const mine = sent
-                .filter(f => f.analysis_id === id && f.suggestion_key === `cover_letter:${id}`)
+                .filter(f => f.analysis_id === id && f.suggestion_key === `cover_letter:${id}` && f.status !== "dismissed")
                 .sort((a, b) => parseTs(b.updated_at || b.created_at) - parseTs(a.updated_at || a.created_at))[0]
             setBaseline(savedContent)
             setContent(mine ? mine.suggested_text : savedContent)
@@ -62,14 +64,15 @@ export function CoverLetterWorkspace({ candidate, attempts, sent, onSent, unread
     }
 
     // plain and unhighlighted unlike the analysis workspace
+    const openResumeId = open?.resume_id
     useEffect(() => {
-        if (!open) { setResumePdf(null); return undefined }
+        if (!openResumeId) { setResumePdf(null); return undefined }
         let cancelled = false
-        api.get(`/mentor/candidates/${candidate.id}/resumes/${open.resume_id}/file`, { responseType: "blob" })
+        api.get(`/mentor/candidates/${candidate.id}/resumes/${openResumeId}/file`, { responseType: "blob" })
             .then(res => { if (!cancelled) setResumePdf(res.data) })
             .catch(() => { if (!cancelled) setResumePdf(null) })
         return () => { cancelled = true }
-    }, [open?.resume_id, candidate.id])
+    }, [openResumeId, candidate.id])
 
     async function submit() {
         if (!content.trim() || !open) return

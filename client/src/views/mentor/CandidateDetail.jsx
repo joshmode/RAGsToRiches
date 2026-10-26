@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import ReactMarkdown from "react-markdown"
 import { Building2, Check, ChevronDown, ChevronUp, PenSquare, RotateCw, X } from "lucide-react"
@@ -51,7 +51,7 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
     // floating compose button for feedback unrelated to any suggestion
     const [composeOpen, setComposeOpen] = useState(false)
 
-    async function load() {
+    const load = useCallback(async () => {
         try {
             const [historyRes, sentRes] = await Promise.all([
                 api.get(`/mentor/candidates/${candidate.id}/history`),
@@ -60,8 +60,8 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
             setHistory(historyRes.data)
             setSent(sentRes.data)
         } catch (err) { setError(getError(err)) }
-    }
-    useEffect(() => { load() }, [candidate.id])
+    }, [candidate.id])
+    useEffect(() => { load() }, [load])
 
     async function openAnalysis(id) {
         try {
@@ -106,37 +106,42 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
         }
     }
 
-    // the file once per analysis plus the preview markdown same as the candidate sees
+    // the file once per analysis plus the preview markdown same as the candidate sees.
+    // Keyed by id/resume, not the analysis object: calling load() replaces it with
+    // the same attempt after sending feedback, which used to wipe an in-progress edit.
+    const openAnalysisId = analysis?.id
+    const openResumeId = analysis?.resume_id
     useEffect(() => {
-        if (!analysis) { setResumePdf(null); setPreviewMd(""); setEdited(""); return undefined }
+        if (!openAnalysisId) { setResumePdf(null); setPreviewMd(""); setEdited(""); setDirty(false); return undefined }
         let cancelled = false
         setResumePdf(undefined)
         async function loadFile() {
             try {
                 // the route only serves pdfs
-                const fileRes = await api.get(`/mentor/candidates/${candidate.id}/resumes/${analysis.resume_id}/file`, { responseType: "blob" })
+                const fileRes = await api.get(`/mentor/candidates/${candidate.id}/resumes/${openResumeId}/file`, { responseType: "blob" })
                 if (!cancelled) setResumePdf(fileRes.data)
             } catch { if (!cancelled) setResumePdf(null) }
         }
         async function loadPreview() {
             try {
-                const res = await api.get(`/mentor/candidates/${candidate.id}/analyses/${analysis.id}/preview`)
+                const res = await api.get(`/mentor/candidates/${candidate.id}/analyses/${openAnalysisId}/preview`)
                 if (!cancelled) { setPreviewMd(res.data.markdown); setEdited(res.data.markdown) }
             } catch { if (!cancelled) { setPreviewMd(""); setEdited("") } }
         }
         loadFile()
         loadPreview()
         return () => { cancelled = true }
-    }, [analysis?.id, candidate.id])
+    }, [openAnalysisId, openResumeId, candidate.id])
 
     // drawn in the browser, so opening an edit only scrolls the viewer to it
     const sectionEditActiveKey = sectionEdit ? (analysis?.results?.rewrites?.[sectionEdit]?.[0]?.id || "") : ""
     const highlightActiveKey = composerKey || sectionEditActiveKey
-    const highlights = useMemo(() => Object.values(analysis?.results?.rewrites || {}).flatMap(list =>
+    const highlightRewrites = analysis?.results?.rewrites
+    const highlights = useMemo(() => Object.values(highlightRewrites || {}).flatMap(list =>
         list.filter(it => it.framework_used !== "none" && it.framework_used !== "error").map(it => ({
             id: it.id, text: it.highlight_text || it.original || "", severity: it.severity || "yellow",
         }))
-    ), [analysis])
+    ), [highlightRewrites])
 
     async function runDiff() {
         if (!diffFrom || !diffTo) return
@@ -191,7 +196,7 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
     const sentByKey = useMemo(() => {
         const map = {}
         for (const f of sent) {
-            if (!analysis || f.analysis_id !== analysis.id || !f.suggestion_key) continue
+            if (!openAnalysisId || f.analysis_id !== openAnalysisId || !f.suggestion_key) continue
             const prev = map[f.suggestion_key]
             const at = parseTs(f.updated_at || f.created_at)
             const prevAt = prev && parseTs(prev.updated_at || prev.created_at)
@@ -199,7 +204,7 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
             if (!prev || at > prevAt || (at === prevAt && f.id > prev.id)) map[f.suggestion_key] = f
         }
         return map
-    }, [sent, analysis?.id])
+    }, [sent, openAnalysisId])
 
     const allAnalyses = history?.analyses || []
     const analyses = allAnalyses.filter(a => a.attempt_type !== "cover_letter_only")
@@ -214,9 +219,10 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
         : null
 
     // current attempt up front, older behind a disclosure same as the candidate's inbox
-    const sentCurrentAttempt = sent.reduce((max, f) => Math.max(max, f.attempt_number || 0), 0)
-    const sentCurrent = sent.filter(f => f.attempt_number === sentCurrentAttempt)
-    const sentPrevious = sent.filter(f => f.attempt_number !== sentCurrentAttempt).sort((a, b) => parseTs(a.created_at) - parseTs(b.created_at))
+    const sentForOpenAttempt = analysis ? sent.filter(f => f.analysis_id === analysis.id) : []
+    const sentPrevious = analysis
+        ? sent.filter(f => f.analysis_id !== analysis.id).sort((a, b) => parseTs(a.created_at) - parseTs(b.created_at))
+        : []
 
     function renderSentItem(f) {
         return <div className={`card feedback-item ${f.status}`} key={f.id}>
@@ -253,7 +259,7 @@ export function CandidateDetail({ candidate, onBack, notifSummary, refreshNotifs
             {moreTab === "comments" && <>
                 <span className="section-label">Current Attempt</span>
                 <div className="feedback-list">
-                    {sentCurrent.length ? sentCurrent.map(renderSentItem) : <p className="muted">No feedback sent yet for the current attempt.</p>}
+                    {sentForOpenAttempt.length ? sentForOpenAttempt.map(renderSentItem) : <p className="muted">No feedback sent yet for this attempt.</p>}
                 </div>
                 {sentPrevious.length > 0 && <details className="card previous-feedback">
                     <summary>Previous Attempts ({sentPrevious.length})</summary>

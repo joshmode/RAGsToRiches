@@ -1,3 +1,4 @@
+import "../env.js"
 import { Router } from "express"
 import fetch from "node-fetch"
 import { requireAuth } from "../middleware/auth.js"

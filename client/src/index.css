@@ -53,6 +53,9 @@
     --c-score-strong: #2F7D5C;
     --c-score-mid: #93621C;
     --c-score-weak: #B3443F;
+    /* PDF.js draws page canvases and text layers that React does not style */
+    --c-pdf-canvas: #FFFFFF;
+    --c-pdf-text: #0D0F11;
     color-scheme: light;
 
     --radius: 12px;
@@ -94,6 +97,8 @@
         --c-score-strong: #5FD3A0;
         --c-score-mid: #F0B45A;
         --c-score-weak: #F28B86;
+        --c-pdf-canvas: #171A1F;
+        --c-pdf-text: #E8EAED;
         --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
         --shadow-md: 0 4px 16px rgba(0,0,0,0.45);
         color-scheme: dark;
@@ -128,6 +133,8 @@
     --c-score-strong: #5FD3A0;
     --c-score-mid: #F0B45A;
     --c-score-weak: #F28B86;
+    --c-pdf-canvas: #171A1F;
+    --c-pdf-text: #E8EAED;
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
     --shadow-md: 0 4px 16px rgba(0,0,0,0.45);
     color-scheme: dark;
@@ -1434,7 +1441,7 @@ details.card > summary {
 .pdf-viewer { width: 100%; }
 .pdf-viewer-note { padding: 1rem; color: #C1C5CB; }
 .pdf-viewer-scroll { position: relative; max-height: 80vh; overflow-y: auto; padding: 12px; }
-.pdf-page { position: relative; margin: 0 auto 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.35); background: #fff; }
+.pdf-page { position: relative; margin: 0 auto 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.35); background: var(--c-pdf-canvas); }
 .pdf-page canvas { display: block; }
 .pdf-mark { position: absolute; border-radius: 2px; mix-blend-mode: multiply; opacity: 0.32; pointer-events: auto; transition: opacity 0.15s ease; }
 .pdf-mark-red { background: var(--c-error-fill); }

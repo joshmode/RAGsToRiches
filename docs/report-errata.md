@@ -144,8 +144,8 @@ also automated suites, which CI runs on every push:
 
 | Suite | Tests |
 |---|---|
-| Engine: parser, scoring, claim checks, keyword weaving, routing, analysis flow (`pytest`) | 359 |
-| API (`node --test`, against a stub engine and an in-memory database) | 50 |
+| Engine: parser, scoring, claim checks, keyword weaving, routing, analysis flow (`pytest`) | 381 |
+| API (`node --test`, against a stub engine and an in-memory database) | 52 |
 | Client: review, PDF text search, routes, keywords (`node --test`) | 33 |
 
 The deterministic claim checks are also measured against labelled sets

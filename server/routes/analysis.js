@@ -1,3 +1,4 @@
+import "../env.js"
 import { Router } from "express"
 import multer from "multer"
 import crypto from "crypto"
@@ -7,6 +8,7 @@ import { requireAuth } from "../middleware/auth.js"
 import { canAccess, getAnalysis, getResume } from "../access.js"
 import { pollLimiter, llmLimiter } from "../middleware/rateLimit.js"
 import { fetchEngine } from "../engineClient.js"
+import { engineError, engineJson } from "../engineResponse.js"
 import { resolveProvider, ProviderError, PROVIDER_CHOICES } from "../userKeys.js"
 import { saveRev } from "../documents.js"
 import { saveAnalysis, updateResults } from "../analyses.js"
@@ -37,13 +39,16 @@ function storedParse(resume) {
         return null
     }
 }
-const exts = new Set([".pdf", ".docx", ".doc", ".odt", ".txt", ".md", ".zip"])
+const exts = new Set([".pdf", ".docx", ".odt", ".txt", ".md", ".zip"])
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 25 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
         const name = file.originalname.toLowerCase()
         const ext = name.slice(name.lastIndexOf("."))
+        if (ext === ".doc") {
+            return cb(new Error("Legacy .doc files aren't supported. Save the file as .docx or PDF."), false)
+        }
         cb(exts.has(ext) ? null : new Error("Unsupported resume format."), exts.has(ext))
     },
 })
@@ -79,8 +84,10 @@ router.post("/upload", requireAuth, upload.single("file"), async (req, res) => {
             body: JSON.stringify({ file: fileB64, filename: req.file.originalname }),
         })
         // forward the engine's own error
-        if (!resp.ok) return res.status(resp.status).json(await resp.json())
-        const parsed = await resp.json()
+        if (!resp.ok) {
+            return res.status(resp.status).json({ error: engineError(await engineJson(resp), "The file could not be parsed.") })
+        }
+        const parsed = await engineJson(resp)
 
         if (existing) {
             db.prepare("UPDATE resumes SET parsed_json = ? WHERE id = ?").run(JSON.stringify(parsed), existing.id)
@@ -130,8 +137,8 @@ async function run(engineUrl, jobId, payload) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
         })
-        if (!resp.ok) throw new Error((await resp.json()).error || "Analysis failed.")
-        const results = await resp.json()
+        if (!resp.ok) throw new Error(engineError(await engineJson(resp), "Analysis failed."))
+        const results = await engineJson(resp)
         results.parsed_resume = payload.resume_json
         results.job_description = payload.job_description || ""
         const analysisId = saveAnalysis({
@@ -374,8 +381,10 @@ router.post("/quick-cover-letter", requireAuth, llmLimiter, async (req, res) => 
                 provider: engineProvider, local_endpoint: local_endpoint || "", api_key: apiKey,
             }),
         })
-        if (!resp.ok) return res.status(resp.status).json(await resp.json())
-        const data = await resp.json()
+        if (!resp.ok) {
+            return res.status(resp.status).json({ error: engineError(await engineJson(resp), "Cover letter generation failed.") })
+        }
+        const data = await engineJson(resp)
         // the one extra thing this workflow gets
         const gap = await kwGap(engineUrl, resume_json, job_description, engineProvider, local_endpoint, apiKey)
 
@@ -405,7 +414,7 @@ router.post("/quick-cover-letter", requireAuth, llmLimiter, async (req, res) => 
     }
 })
 
-// jd-only change the resume invalidates the cache
+// A JD change regenerates the letter and keyword gap without rerunning rewrites.
 router.post("/:id/refresh-jd", requireAuth, llmLimiter, async (req, res) => {
     const analysisId = parseInt(req.params.id)
     const row = getAnalysis(analysisId, req.user.id)
@@ -438,8 +447,10 @@ router.post("/:id/refresh-jd", requireAuth, llmLimiter, async (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ resume_json: resumeJson, job_description: jd, provider: engineProvider, local_endpoint: local_endpoint || "", api_key: apiKey }),
         })
-        if (!resp.ok) return res.status(resp.status).json(await resp.json())
-        const data = await resp.json()
+        if (!resp.ok) {
+            return res.status(resp.status).json({ error: engineError(await engineJson(resp), "Cover letter regeneration failed.") })
+        }
+        const data = await engineJson(resp)
         const gap = await kwGap(engineUrl, resumeJson, jd, engineProvider, local_endpoint, apiKey)
 
         const db = getDb()
@@ -454,10 +465,10 @@ router.post("/:id/refresh-jd", requireAuth, llmLimiter, async (req, res) => {
             out.tailoring_tips = []
             out.company = ""
         }
-        // only a resume_analysis hash feedscache, leave the other alone
-        const resume = getResume(row.resume_id, req.user.id)
-        const hash = row.attempt_type === "cover_letter_only" || !resume ? row.content_hash
-            : contentHash({ fileKey: fileKey(resume), jobDescription: jd, provider, useCritic: false, localEndpoint: local_endpoint })
+        // Keep the original analysis cacheable: its rewrites and score still match
+        // the resume and job it was run against. Updating the row in place with
+        // cover-letter output is separate from a future analysis's cache key.
+        const hash = row.content_hash
         updateResults(analysisId, out, { jobDescription: jd, hash })
         // real new version, the old letter stays in history
         saveRev({

@@ -1,9 +1,5 @@
 services:
   engine:
-    environment:
-      CRITIC_SAME_AS_MAIN: "false"
-      CRITIC_PROVIDER: openrouter
-      CRITIC_MODEL: nvidia/nemotron-3-ultra-550b-a55b:free
     volumes:
       - ./chroma_db:/app/chroma_db
   api:
