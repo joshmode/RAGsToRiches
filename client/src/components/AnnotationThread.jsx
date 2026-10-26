@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import api from "../api/client"
 import { getError } from "../lib/errors"
 import { formatDateTime } from "../lib/format"
@@ -9,14 +9,14 @@ export function AnnotationThread({ analysisId, suggestionKey, section, viewerRol
     const [comment, setComment] = useState("")
     const [error, setError] = useState("")
 
-    async function load() {
+    const load = useCallback(async () => {
         if (!analysisId || !suggestionKey) { setAnnotations([]); return }
         try {
             const res = await api.get(`/annotations/${analysisId}`)
             setAnnotations(res.data.filter(item => item.key === suggestionKey))
         } catch { setAnnotations([]) }
-    }
-    useEffect(() => { load() }, [analysisId, suggestionKey])
+    }, [analysisId, suggestionKey])
+    useEffect(() => { load() }, [load])
 
     async function postComment() {
         if (!comment.trim() || !analysisId || !suggestionKey) return

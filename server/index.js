@@ -1,3 +1,4 @@
+import "./env.js"
 import app from "./app.js"
 import { getDb, sweepGuests } from "./db.js"
 import { recoverJobs } from "./routes/analysis.js"

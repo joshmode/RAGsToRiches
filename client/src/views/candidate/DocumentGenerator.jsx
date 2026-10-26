@@ -29,6 +29,9 @@ export function DocumentGenerator({ type, result, provider, localEndpoint, decis
     const title = type === "cv" ? "Tailored CV" : "Cover Letter"
     const documentType = type === "cv" ? "cv" : "cover_letter"
     const firstRun = useRef(true)
+    const scopeRef = useRef("")
+    const analysisRef = analysisId || result.analysis_id
+    const scope = analysisRef ? `${analysisRef}:${documentType}` : ""
     // FULL_NAME_RESUME for the cv, FULL_NAME_COMPANY_NAME for the letter
     const baseFilename = type === "cv"
         ? `${fileSafe(fullName)}_RESUME`
@@ -36,7 +39,14 @@ export function DocumentGenerator({ type, result, provider, localEndpoint, decis
 
     useEffect(() => {
         if (firstRun.current) { firstRun.current = false; return undefined }
-        const id = analysisId || result.analysis_id
+        // Opening another attempt loads new text under a new id. That hydration is
+        // not an edit, so do not autosave the old text onto the new analysis.
+        if (scopeRef.current !== scope) {
+            scopeRef.current = scope
+            setSaveState("idle")
+            return undefined
+        }
+        const id = analysisRef
         if (!text || !id) return undefined
         setSaveState("saving")
         const t = setTimeout(async () => {
@@ -49,7 +59,7 @@ export function DocumentGenerator({ type, result, provider, localEndpoint, decis
             }
         }, 1500)
         return () => clearTimeout(t)
-    }, [text])
+    }, [text, scope, analysisRef, documentType, company])
 
     async function generate() {
         setBusy(true)
@@ -61,7 +71,7 @@ export function DocumentGenerator({ type, result, provider, localEndpoint, decis
                 job_description: result.job_description || "",
                 provider,
                 local_endpoint: localEndpoint,
-                analysis_id: analysisId || result.analysis_id,
+                analysis_id: analysisRef,
             }
             if (type === "cv") {
                 payload.rewrite_suggestions = result.rewrites
@@ -155,10 +165,10 @@ export function DocumentGenerator({ type, result, provider, localEndpoint, decis
             </div>
             {/* every version of this document, who authored it, and what was decided about it -
                 the same audit trail the mentor sees, from the same endpoint */}
-            {(analysisId || result.analysis_id) && <details className="card">
+            {analysisRef && <details className="card">
                 <summary>Revision History</summary>
                 <RevisionTimeline
-                    analysisId={analysisId || result.analysis_id} documentType={documentType}
+                    analysisId={analysisRef} documentType={documentType}
                     viewerRole="candidate" refreshKey={historyKey}
                 />
             </details>}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Check, CheckCircle2, X, XCircle } from "lucide-react"
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
@@ -19,10 +19,10 @@ export function FeedbackInbox({ analysisId, attemptType, unreadByType = {}, onDo
         if (attemptType) setTab(attemptType === "cover_letter_only" ? "cover_letter" : "resume")
     }, [analysisId, attemptType])
 
-    async function load() {
+    const load = useCallback(async () => {
         try { setItems((await api.get("/mentor/feedback/inbox")).data) } catch (err) { setError(getError(err)) }
-    }
-    useEffect(() => { load() }, [])
+    }, [])
+    useEffect(() => { load() }, [analysisId, load])
 
     async function setStatus(id, status) {
         if (busyId) return

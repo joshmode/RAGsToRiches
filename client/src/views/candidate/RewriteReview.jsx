@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, Check, CheckCircle2, ChevronLeft, ChevronRight, Info, Lightbulb, ShieldCheck, Tag, X, XCircle } from "lucide-react"
 import api from "../../api/client"
 import { getError } from "../../lib/errors"
+import { parseTs } from "../../lib/format"
 import { DocumentDiff } from "../../components/DocumentDiff"
 import { MentorSuggestionBlock, editSupersedes } from "../../components/MentorSuggestionBlock"
 import { AnnotationThread } from "../../components/AnnotationThread"
@@ -48,7 +49,12 @@ export function RewriteReview({ result, file, decisions, setDecisions, analysisI
         api.get("/mentor/feedback/inbox").then(res => {
             const map = {}
             for (const f of res.data) {
-                if (f.feedback_type === "edit" && f.analysis_id === analysisId && f.suggestion_key) map[f.suggestion_key] = f
+                if (f.feedback_type === "edit" && f.analysis_id === analysisId && f.suggestion_key) {
+                    const previous = map[f.suggestion_key]
+                    const at = parseTs(f.updated_at || f.created_at)?.getTime() ?? -Infinity
+                    const previousAt = previous ? (parseTs(previous.updated_at || previous.created_at)?.getTime() ?? -Infinity) : -Infinity
+                    if (!previous || at > previousAt || (at === previousAt && f.id > previous.id)) map[f.suggestion_key] = f
+                }
             }
             setMentorEdits(map)
         }).catch(() => setMentorEdits({}))

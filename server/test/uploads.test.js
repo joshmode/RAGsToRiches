@@ -93,6 +93,14 @@ describe("uploading", () => {
         assert.notEqual(txt.data.resume_id, md.data.resume_id)
     })
 
+    test("legacy .doc is rejected instead of producing an empty resume", async () => {
+        const before = calls("/parse")
+        const res = await alice.post("/analysis/upload", form("legacy word bytes", "resume.doc"))
+        assert.equal(res.status, 400)
+        assert.match(res.data.error, /\.docx or PDF/)
+        assert.equal(calls("/parse") - before, 0)
+    })
+
     test("another user's identical file is theirs alone", async () => {
         const mine = await alice.post("/analysis/upload", form("%PDF-1.4 shared"))
         const theirs = await bob.post("/analysis/upload", form("%PDF-1.4 shared"))

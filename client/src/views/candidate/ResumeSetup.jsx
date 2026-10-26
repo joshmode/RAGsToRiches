@@ -48,13 +48,12 @@ export function ResumeSetup({ file, setFile, jobDescription, setJobDescription, 
         accept: {
             "application/pdf": [".pdf"],
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
-            "application/msword": [".doc"],
             "application/vnd.oasis.opendocument.text": [".odt"],
             "text/plain": [".txt", ".md"],
             "application/zip": [".zip"],
         },
         onDrop: (accepted, rejections) => {
-            setRejectionError(rejections.length ? "That file type isn't supported. Please upload a PDF, DOCX, DOC, ODT, TXT, MD, or ZIP file." : "")
+            setRejectionError(rejections.length ? "That file type isn't supported. Please upload a PDF, DOCX, ODT, TXT, MD, or ZIP file. Legacy .doc files must be saved as .docx first." : "")
             if (accepted.length) setFile(accepted[0])
         },
     })
@@ -63,7 +62,7 @@ export function ResumeSetup({ file, setFile, jobDescription, setJobDescription, 
         <div className="card">
             <div className="two-col">
                 <div>
-                    <span className="section-label">Resume PDF / DOCX / DOC / ODT / TXT / MD / LinkedIn ZIP</span>
+                    <span className="section-label">Resume PDF / DOCX / ODT / TXT / MD / LinkedIn ZIP</span>
                     <div {...getRootProps()} className={`dropzone ${isDragActive ? "active" : ""} ${file ? "has-file" : ""}`}>
                         <input {...getInputProps()} />
                         {file ? (

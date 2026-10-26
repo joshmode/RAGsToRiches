@@ -1,3 +1,4 @@
+import "../env.js"
 import { Router } from "express"
 import fetch from "node-fetch"
 import crypto from "crypto"
@@ -5,6 +6,7 @@ import { requireAuth } from "../middleware/auth.js"
 import { getDb } from "../db.js"
 import { getAnalysis } from "../access.js"
 import { fetchEngine } from "../engineClient.js"
+import { engineError, engineJson } from "../engineResponse.js"
 import { resolveProvider, ProviderError, PROVIDER_CHOICES } from "../userKeys.js"
 import { llmLimiter } from "../middleware/rateLimit.js"
 
@@ -25,8 +27,10 @@ router.post("/jd", requireAuth, async (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ url: req.body.url }),
         })
-        if (!resp.ok) return res.status(resp.status).json(await resp.json())
-        const data = await resp.json()
+        if (!resp.ok) {
+            return res.status(resp.status).json({ error: engineError(await engineJson(resp), "The job description couldn't be extracted from that URL.") })
+        }
+        const data = await engineJson(resp)
         const text = String(data.text || "")
         let host = ""
         try { host = new URL(req.body.url).hostname } catch {}
@@ -70,8 +74,10 @@ router.post("/linkedin", requireAuth, async (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ url: req.body.url }),
         })
-        if (!resp.ok) return res.status(resp.status).json(await resp.json())
-        const data = await resp.json()
+        if (!resp.ok) {
+            return res.status(resp.status).json({ error: engineError(await engineJson(resp), "The LinkedIn profile couldn't be read.") })
+        }
+        const data = await engineJson(resp)
         const analysisId = toIdOrNull(req.body.analysis_id)
         if (req.body.analysis_id && (!analysisId || !getAnalysis(analysisId, req.user.id))) {
             return res.status(404).json({ error: "Analysis not found." })
@@ -146,8 +152,10 @@ router.post("/compare", requireAuth, llmLimiter, async (req, res) => {
                 api_key: apiKey,
             }),
         })
-        if (!resp.ok) return res.status(resp.status).json(await resp.json())
-        const data = await resp.json()
+        if (!resp.ok) {
+            return res.status(resp.status).json({ error: engineError(await engineJson(resp), "The job description couldn't be read.") })
+        }
+        const data = await engineJson(resp)
         const row = db.prepare(
             "INSERT INTO job_matches (user_id, job_description_id, analysis_id, result_json, content_hash, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))"
         ).run(req.user.id, jobId, analysisId, JSON.stringify(data), hash)

@@ -38,7 +38,13 @@ router.get("/summary", requireAuth, (req, res) => {
 // viewing clears unread a later visit can badge again
 router.post("/mark-read", requireAuth, (req, res) => {
     const analysisId = req.body.analysis_id ? parseInt(req.body.analysis_id) : null
-    if (!analysisId) return res.status(400).json({ error: "analysis_id is required." })
+    if (req.body.all === true) {
+        // General mentor feedback has no analysis_id. Opening the Mentor tab is
+        // the only place it is shown, so it is also the place that clears it.
+        getDb().prepare("UPDATE notifications SET read = 1 WHERE user_id = ? AND read = 0").run(req.user.id)
+        return res.json({ ok: true })
+    }
+    if (!analysisId) return res.status(400).json({ error: "analysis_id or all is required." })
     getDb().prepare(
         "UPDATE notifications SET read = 1 WHERE user_id = ? AND analysis_id = ? AND read = 0"
     ).run(req.user.id, analysisId)

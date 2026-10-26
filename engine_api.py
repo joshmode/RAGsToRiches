@@ -278,6 +278,15 @@ def scrape_jd_endpoint():
     data = _get_json_body()
     url = data.get("url", "")
     text = job_scraper.scrape_jd(url)
+    # scrape_jd returns a human-readable explanation when it is blocked or finds
+    # no description. Passing that on as the job ad silently poisons the keyword
+    # read, so report it as a failed scrape and let the client keep the field empty.
+    if not text.strip() or text.startswith((
+        "Only public HTTPS",
+        "Could not extract",
+        "Failed to scrape",
+    )):
+        return jsonify({"error": text.strip() or "Could not extract the job description."}), 422
     return jsonify({"text": text})
 
 

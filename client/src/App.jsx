@@ -119,9 +119,18 @@ function App() {
         api.post("/notifications/mark-read", { analysis_id: analysisId }).then(refreshNotifs).catch(() => {})
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [analysisId])
+    // General mentor feedback has no analysis id, so it is only visible here.
+    // Opening the Mentor tab acknowledges everything shown there.
+    useEffect(() => {
+        if (!user || route.screen !== "attempt" || route.tab !== "mentor" || !attemptId) return
+        api.post("/notifications/mark-read", { all: true }).then(refreshNotifs).catch(() => {})
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user, route.screen, route.tab, attemptId])
+    // Provider status arrives after the first paint. Showing a missing-key warning
+    // before then points BYOK users at a form that may vanish a moment later.
     const providerMeta = PROVIDER_OPTIONS.find(p => p.key === provider)
     const visibleProviders = PROVIDER_OPTIONS.filter(p => (p.key !== "local" || status.localAllowed) && (p.key !== "demo" || status.demo))
-    const needsKey = providerMeta?.byok && status[provider] === false
+    const needsKey = providerMeta?.byok && statusLoaded && status[provider] === false
     const fullName = result?.parsed_resume?.contact?.name || result?.contact?.name || ""
     const isCoverLetterOnlyAttempt = result?.attempt_type === "cover_letter_only"
     // suggestions are streaming in but nothing else exists yet
@@ -192,6 +201,13 @@ function App() {
         setDocs({ cv: "", cover_letter: "" })
         setKeyMessage("")
     }, [provider, useCritic, file])
+    // A scraped job, comparison, LinkedIn preview, and its status are all for the
+    // attempt on screen. Carrying them into a new attempt shows one job's fit
+    // beside another job's resume.
+    useEffect(() => {
+        setJobMatch({ url: "", scraped: "", jobId: null, comparison: null, linkedinUrl: "", liProfile: null, company: "" })
+        setJmBusy("")
+    }, [analysisId])
 
     // one upload per file. the server keys it on the bytes, so the same file again
     // is a lookup, not a second parse
@@ -373,6 +389,9 @@ function App() {
 
             setResult(newResult)
             setAnalysisId(res.data.id)
+            // Do not let DocumentGenerator autosave the previous attempt's text
+            // while this attempt's saved documents are still loading.
+            setDocs({ cv: "", cover_letter: "" })
             setJobDescription(newResult.job_description || "")
             let decisionsData = {}
             try { decisionsData = (await api.get(`/analysis/${id}/decisions`)).data } catch { /* leave empty */ }
@@ -486,9 +505,10 @@ function App() {
         }
     }
 
-    const isCandidate = user?.role === "candidate"
-
+    // This hook must run before the early returns above, or signing in changes
+    // the number of hooks between renders and React tears the tree down.
     const [deleting, setDeleting] = useState(false)
+    const isCandidate = user?.role === "candidate"
     function accountDeleted() {
         setDeleting(false)
         navigate("/", { replace: true, state: { notice: user?.is_guest ? "Your guest session and everything in it have been deleted." : "Your account and everything in it have been deleted." } })

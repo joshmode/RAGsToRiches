@@ -21,7 +21,10 @@ export function FeedbackComposer({ candidateId, analysisId, prefill, onSent }) {
             setComment("")
             setStatus("")
         }
-        // sync all changes
+        // The parent rebuilds prefill on every render. Syncing on object identity
+        // would wipe the mentor's typing, so key/seed identify a new prefill and
+        // that is deliberately the only trigger.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [prefill?.key, prefill?.seed])
 
     async function send() {
